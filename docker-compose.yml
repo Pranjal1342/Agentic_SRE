@@ -1,0 +1,45 @@
+version: "3.9"
+
+services:
+  postgres:
+    image: ankane/pgvector:latest
+    container_name: sre_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-sre}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-sre_secret}
+      POSTGRES_DB: ${POSTGRES_DB:-sre_memory}
+    ports:
+      - "15432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-sre} -d ${POSTGRES_DB:-sre_memory}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  sre-env:
+    build: .
+    container_name: sre_env
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      POSTGRES_URL: postgresql+asyncpg://${POSTGRES_USER:-sre}:${POSTGRES_PASSWORD:-sre_secret}@postgres:5432/${POSTGRES_DB:-sre_memory}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+      EMBED_MODEL: ${EMBED_MODEL:-all-MiniLM-L6-v2}
+      SIMILARITY_THRESHOLD: ${SIMILARITY_THRESHOLD:-0.75}
+      CONSOLIDATION_INTERVAL_MINUTES: ${CONSOLIDATION_INTERVAL_MINUTES:-60}
+      AGENT_VERSION: ${AGENT_VERSION:-v2.0.0}
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./knowledge_base:/app/knowledge_base:ro
+    env_file:
+      - .env
+
+volumes:
+  pgdata:
