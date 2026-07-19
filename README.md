@@ -1,3 +1,11 @@
+---
+title: Agentic SRE Benchmark Suite
+sdk: gradio
+sdk_version: 4.36.0
+app_file: app.py
+pinned: false
+---
+
 # Advanced Agentic SRE & Adversarial Stress-Testing Framework
 
 An autonomous Site Reliability Engineering (SRE) diagnosis and remediation system powered by structured Large Language Model reasoning loops. The framework pairs live diagnostic function calling with immediate safety gates, sustained temporal metric verification, causal telemetry tracking, and an extensive adversarial evaluation suite designed to audit both AI agent behavior and reward formula robustness.
