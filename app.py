@@ -10,6 +10,23 @@ import asyncio
 import json
 from typing import Any, Dict, List
 
+import huggingface_hub
+if not hasattr(huggingface_hub, "HfFolder"):
+    class _MonkeyPatchHfFolder:
+        @staticmethod
+        def save_token(token: str) -> None:
+            pass
+        @staticmethod
+        def get_token() -> str | None:
+            return None
+        @staticmethod
+        def delete_token() -> None:
+            pass
+        @staticmethod
+        def path_token() -> str:
+            return ""
+    huggingface_hub.HfFolder = _MonkeyPatchHfFolder
+
 import gradio as gr
 
 from adversarial.runner import run_all
