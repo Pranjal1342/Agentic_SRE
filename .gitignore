@@ -1,0 +1,52 @@
+# Environments & Virtual Environments
+.venv/
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+
+# Environment Variables & Secrets (NEVER COMMIT THESE)
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+*.key
+*.pem
+*.p12
+*.ini
+secrets.*
+credentials.*
+token.*
+
+# Python Bytecode & Caches
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+*.cover
+*.py,cover
+.hypothesis/
+
+# Runtime Logs & Temporary Output Reports
+*.log
+adversarial_report.json
+inference_results.json
+*.db
+*.sqlite
+*.sqlite3
+
+# IDE & Editor Configuration
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
