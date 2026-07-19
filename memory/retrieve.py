@@ -41,7 +41,7 @@ def embed_state(state_signature: str) -> List[float]:
     """Embed a state signature string into a 384-dim vector."""
     model = _get_embed_model()
     vec = model.encode(state_signature, normalize_embeddings=True)
-    return vec.tolist()
+    return vec.tolist() if hasattr(vec, "tolist") else list(vec)
 
 
 async def retrieve_lessons(

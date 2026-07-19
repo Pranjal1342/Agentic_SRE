@@ -170,12 +170,12 @@ class ProviderPool:
                 "name": "Primary Configured"
             })
 
-        # 2. Add all known backup tiers if present or configured in environment variables
+        # 2. Add all known backup tiers if present or configured in environment variables, ordered strictly by Tier priority
         known_tiers = [
-            {"name": "OpenRouter (Tier 4)", "base_url": "https://openrouter.ai/api/v1", "api_key": os.getenv("OPENROUTER_API_KEY", ""), "model_name": "z-ai/glm-5.2"},
             {"name": "ZenMux (Tier 1)", "base_url": "https://api.zenmux.ai/v1", "api_key": os.getenv("ZENMUX_API_KEY", ""), "model_name": "z-ai/glm-5.2-free"},
             {"name": "Z.ai Direct (Tier 2)", "base_url": "https://api.z.ai/v1", "api_key": os.getenv("ZAI_API_KEY", ""), "model_name": "glm-5.2"},
             {"name": "Zhipu Direct (Tier 3)", "base_url": "https://open.bigmodel.cn/api/paas/v4/", "api_key": os.getenv("ZHIPU_API_KEY", ""), "model_name": "glm-5.2"},
+            {"name": "OpenRouter (Tier 4)", "base_url": "https://openrouter.ai/api/v1", "api_key": os.getenv("OPENROUTER_API_KEY", ""), "model_name": "z-ai/glm-5.2"},
             {"name": "HuggingFace Router (Tier 0)", "base_url": "https://router.huggingface.co/v1", "api_key": os.getenv("HF_API_KEY", ""), "model_name": "zai-org/GLM-5.2:novita"},
         ]
         seen_keys = {p["api_key"] for p in self.providers}
