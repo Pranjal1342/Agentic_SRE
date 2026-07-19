@@ -32,6 +32,19 @@ import gradio as gr
 from adversarial.runner import run_all
 from inference import eval_task
 
+try:
+    import spaces
+except ImportError:
+    class _DummySpaces:
+        @staticmethod
+        def GPU(*args, **kwargs):
+            def decorator(fn):
+                return fn
+            if len(args) == 1 and callable(args[0]):
+                return args[0]
+            return decorator
+    spaces = _DummySpaces()
+
 
 def format_grade_results(results: List[Any]) -> str:
     """Format GradeResult objects into a markdown scorecard report."""
@@ -54,6 +67,13 @@ def format_grade_results(results: List[Any]) -> str:
     return "\n".join(md)
 
 
+@spaces.GPU
+def zerogpu_warmup() -> str:
+    """Warmup helper for ZeroGPU detection."""
+    return "ZeroGPU Ready"
+
+
+@spaces.GPU(duration=120)
 def run_benchmark_ui(test_choices: List[str], use_db: bool) -> tuple[str, str]:
     """Handler for the Adversarial Benchmark tab."""
     if not test_choices:
@@ -78,6 +98,7 @@ def run_benchmark_ui(test_choices: List[str], use_db: bool) -> tuple[str, str]:
         return f"Error executing benchmark suite: {str(e)}", json.dumps({"error": str(e)}, indent=2)
 
 
+@spaces.GPU(duration=120)
 def run_episode_ui(task_id: str) -> tuple[str, str]:
     """Handler for running a standalone diagnostic task episode."""
     try:
