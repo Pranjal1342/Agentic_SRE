@@ -10,6 +10,7 @@ Each test gets a specific behavioral check against the decisions trace, not R_t.
 from __future__ import annotations
 
 import re
+import dataclasses
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
@@ -23,6 +24,12 @@ class DecisionTrace:
     resolution_summary: Optional[str] = None
     final_reward: Optional[float] = None
 
+    def model_dump(self) -> Dict[str, Any]:
+        return dataclasses.asdict(self)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return dataclasses.asdict(self)
+
 
 @dataclass
 class GradeResult:
@@ -33,6 +40,12 @@ class GradeResult:
     expected_behavior: str       # what was being tested for
     findings: List[str] = field(default_factory=list)
     classification: str = "agent_behavior"  # "agent_behavior" | "architecture_gap" | "reward_function_bug"
+
+    def model_dump(self) -> Dict[str, Any]:
+        return dataclasses.asdict(self)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return dataclasses.asdict(self)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

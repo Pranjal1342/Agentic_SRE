@@ -92,7 +92,7 @@ def run_benchmark_ui(test_choices: List[str], use_db: bool) -> tuple[str, str]:
     try:
         results = asyncio.run(run_all(test_ids=test_ids, n_runs=1, use_db=use_db))
         markdown_report = format_grade_results(results)
-        raw_json = json.dumps([r.model_dump() for r in results], indent=2)
+        raw_json = json.dumps([r.model_dump() if hasattr(r, "model_dump") else (r.to_dict() if hasattr(r, "to_dict") else r.__dict__) for r in results], indent=2)
         return markdown_report, raw_json
     except Exception as e:
         return f"Error executing benchmark suite: {str(e)}", json.dumps({"error": str(e)}, indent=2)
