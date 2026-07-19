@@ -41,5 +41,4 @@ pytest-asyncio>=0.23.6
 httpx>=0.24.1
 
 # UI / Hugging Face Spaces
-gradio>=4.44.1
-huggingface-hub>=0.20.0,<0.24.0
+gradio>=4.36.0
