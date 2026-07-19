@@ -20,6 +20,6 @@ COPY . .
 # Build FAISS runbook index at image build time (baked in, read-only at runtime)
 RUN python -c "from rag.runbook_rag import build_index; build_index()" || true
 
-EXPOSE 8000
+EXPOSE 7860 8000
 
 CMD ["python", "main.py"]

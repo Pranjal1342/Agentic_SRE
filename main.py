@@ -11,6 +11,7 @@ Parallel episodes do NOT see each other's lesson writes mid-batch (per §8.1).
 from __future__ import annotations
 
 import asyncio
+import os
 import sys
 
 import structlog
@@ -80,7 +81,7 @@ def main() -> None:
     uvicorn.run(
         app,
         host="0.0.0.0",
-        port=8000,
+        port=int(os.getenv("PORT", 8000)),
         log_level="info",
     )
 
