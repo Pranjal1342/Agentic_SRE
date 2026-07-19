@@ -192,4 +192,7 @@ with gr.Blocks(title="Agentic SRE Benchmark Suite") as demo:
         )
 
 if __name__ == "__main__":
-    demo.launch(ssr=False)
+    try:
+        demo.launch(ssr=False)
+    except TypeError:
+        demo.launch()
