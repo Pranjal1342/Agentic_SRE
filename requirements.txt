@@ -1,5 +1,5 @@
 # Core server
-fastapi>=0.111.0,<0.113.0
+fastapi>=0.111.0
 uvicorn[standard]>=0.29.0
 websockets>=10.4,<12.0
 
