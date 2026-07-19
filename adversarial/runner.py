@@ -37,15 +37,14 @@ async def run_all(
     """Run the requested adversarial tests and return all GradeResults."""
 
     results: List[GradeResult] = []
-    db_session = None
-
+    session_factory = None
     if use_db:
         try:
             from memory.db import get_session_factory
-            db_session = get_session_factory()()
+            session_factory = get_session_factory()
         except Exception as e:
             log.warning("runner.db_unavailable", error=str(e), note="Tests 1/3 will skip DB features")
-            db_session = None
+            session_factory = None
 
     tests_to_run = test_ids or [1, 2, 3, 4, 5]
 
@@ -54,6 +53,7 @@ async def run_all(
         print(f"Running Test {test_id}...")
         print(f"{'-'*60}")
 
+        db_session = session_factory() if session_factory is not None else None
         try:
             if test_id == 1:
                 from adversarial.test_1_distribution_shift import run_test1
@@ -85,12 +85,12 @@ async def run_all(
         except Exception as e:
             log.exception(f"runner.test_{test_id}_failed", error=str(e))
             print(f"  ERROR: Test {test_id} failed with exception: {e}")
-
-    if db_session is not None:
-        try:
-            await db_session.close()
-        except Exception:
-            pass
+        finally:
+            if db_session is not None:
+                try:
+                    await db_session.close()
+                except Exception:
+                    pass
 
     return results
 

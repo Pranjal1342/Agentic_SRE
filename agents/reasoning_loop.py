@@ -314,7 +314,7 @@ def _execute_completion_with_failover(messages: List[Dict[str, Any]], tools: Lis
             last_exc = exc
             err_msg = str(exc).lower()
             status_code = getattr(exc, "status_code", None)
-            if status_code in [401, 402, 403] or (status_code in [400, 404] and ("model" in err_msg or "not a valid" in err_msg or "endpoint" in err_msg)):
+            if status_code in [401, 402, 403, 404] or (status_code == 400 and ("model" in err_msg or "not a valid" in err_msg or "endpoint" in err_msg)):
                 # Out of credits / auth failure / invalid model ID on this provider — rotate immediately!
                 log.warning("model.provider_error", status=status_code, provider=active["name"], error=str(exc)[:150])
                 if not provider_pool.next_provider():
