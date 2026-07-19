@@ -172,11 +172,11 @@ class ProviderPool:
 
         # 2. Add all known backup tiers if present or configured in environment variables, ordered strictly by Tier priority
         known_tiers = [
-            {"name": "ZenMux (Tier 1)", "base_url": "https://api.zenmux.ai/v1", "api_key": os.getenv("ZENMUX_API_KEY", ""), "model_name": "z-ai/glm-5.2-free"},
-            {"name": "Z.ai Direct (Tier 2)", "base_url": "https://api.z.ai/v1", "api_key": os.getenv("ZAI_API_KEY", ""), "model_name": "glm-5.2"},
-            {"name": "Zhipu Direct (Tier 3)", "base_url": "https://open.bigmodel.cn/api/paas/v4/", "api_key": os.getenv("ZHIPU_API_KEY", ""), "model_name": "glm-5.2"},
-            {"name": "OpenRouter (Tier 4)", "base_url": "https://openrouter.ai/api/v1", "api_key": os.getenv("OPENROUTER_API_KEY", ""), "model_name": "z-ai/glm-5.2"},
-            {"name": "HuggingFace Router (Tier 0)", "base_url": "https://router.huggingface.co/v1", "api_key": os.getenv("HF_API_KEY", ""), "model_name": "zai-org/GLM-5.2:novita"},
+            {"name": "ZenMux (Tier 1)", "base_url": "https://api.zenmux.ai/v1", "api_key": (settings.zenmux_api_key or "").strip(), "model_name": "z-ai/glm-5.2-free"},
+            {"name": "Z.ai Direct (Tier 2)", "base_url": "https://api.z.ai/v1", "api_key": (settings.zai_api_key or "").strip(), "model_name": "glm-5.2"},
+            {"name": "Zhipu Direct (Tier 3)", "base_url": "https://open.bigmodel.cn/api/paas/v4/", "api_key": (settings.zhipu_api_key or "").strip(), "model_name": "glm-5.2"},
+            {"name": "OpenRouter (Tier 4)", "base_url": "https://openrouter.ai/api/v1", "api_key": (settings.openrouter_api_key or "").strip(), "model_name": "z-ai/glm-5.2"},
+            {"name": "HuggingFace Router (Tier 0)", "base_url": "https://router.huggingface.co/v1", "api_key": (settings.hf_api_key or "").strip(), "model_name": "zai-org/GLM-5.2:novita"},
         ]
         seen_keys = {p["api_key"] for p in self.providers}
         for t in known_tiers:
@@ -186,10 +186,11 @@ class ProviderPool:
 
     def next_provider(self) -> bool:
         if len(self.providers) <= 1:
+            log.warning("api.provider_failover_aborted", current_idx=self.current_idx, total_providers=len(self.providers), reason="No remaining providers to rotate to")
             return False
         self.current_idx = (self.current_idx + 1) % len(self.providers)
         p = self.providers[self.current_idx]
-        log.warning("api.provider_failover", switched_to=p["name"], base_url=p["base_url"], model=p["model_name"])
+        log.warning("api.provider_failover", current_idx=self.current_idx, total_providers=len(self.providers), switched_to=p["name"], base_url=p["base_url"], model=p["model_name"])
         return True
 
     def get_active(self) -> Dict[str, Any]:

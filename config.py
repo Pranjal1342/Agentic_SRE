@@ -1,6 +1,7 @@
 """
 config.py — Typed config via pydantic-settings. Single source of truth for all tunables.
 """
+from typing import Optional
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import Field
 
@@ -55,6 +56,28 @@ class Settings(BaseSettings):
             "'off' only for cheap classification calls if any get added later. "
             "Passed as extra_body to the API call."
         ),
+    )
+
+    # ── Backup provider API keys for automatic failover rotation ──────────────
+    zenmux_api_key: Optional[str] = Field(
+        default="",
+        description="Backup API key for ZenMux (Tier 1).",
+    )
+    zai_api_key: Optional[str] = Field(
+        default="",
+        description="Backup API key for Z.ai Direct (Tier 2).",
+    )
+    zhipu_api_key: Optional[str] = Field(
+        default="",
+        description="Backup API key for Zhipu Direct (Tier 3).",
+    )
+    openrouter_api_key: Optional[str] = Field(
+        default="",
+        description="Backup API key for OpenRouter (Tier 4).",
+    )
+    hf_api_key: Optional[str] = Field(
+        default="",
+        description="Backup API key for HuggingFace Router (Tier 0).",
     )
 
     # ── Future DPO fine-tune target (NOT the acting model, NOT built yet) ────
