@@ -310,24 +310,25 @@ def _execute_completion_with_failover(messages: List[Dict[str, Any]], tools: Lis
             # If we hit multiple rate limits, rotate provider to avoid blocking
             if len(provider_pool.providers) > 1 and (total_attempts % 2 == 0):
                 provider_pool.next_provider()
-        except openai.APIStatusError as exc:
+        except (openai.APIStatusError, openai.APIConnectionError, openai.APITimeoutError) as exc:
             last_exc = exc
             err_msg = str(exc).lower()
-            if exc.status_code in [401, 402, 403] or (exc.status_code in [400, 404] and ("model" in err_msg or "not a valid" in err_msg or "endpoint" in err_msg)):
+            status_code = getattr(exc, "status_code", None)
+            if status_code in [401, 402, 403] or (status_code in [400, 404] and ("model" in err_msg or "not a valid" in err_msg or "endpoint" in err_msg)):
                 # Out of credits / auth failure / invalid model ID on this provider — rotate immediately!
-                log.warning("model.provider_error", status=exc.status_code, provider=active["name"], error=str(exc)[:150])
+                log.warning("model.provider_error", status=status_code, provider=active["name"], error=str(exc)[:150])
                 if not provider_pool.next_provider():
                     raise  # No other providers to fall back to
                 continue
-            elif exc.status_code == 429:
+            elif status_code == 429:
                 delay = min(base_delay * (2 ** ((total_attempts - 1) % max_retries)), max_delay)
                 log.warning("model.status_429", provider=active["name"], retry_in=delay)
                 time.sleep(delay)
                 if len(provider_pool.providers) > 1 and (total_attempts % 2 == 0):
                     provider_pool.next_provider()
-            elif exc.status_code and exc.status_code >= 500:
+            elif (status_code and status_code >= 500) or isinstance(exc, (openai.APIConnectionError, openai.APITimeoutError)):
                 delay = min(base_delay * (2 ** ((total_attempts - 1) % max_retries)), max_delay)
-                log.warning("model.server_error", status=exc.status_code, provider=active["name"], retry_in=delay)
+                log.warning("model.server_or_connection_error", status=status_code or type(exc).__name__, provider=active["name"], retry_in=delay, error=str(exc)[:150])
                 time.sleep(delay)
                 if len(provider_pool.providers) > 1 and (total_attempts % 3 == 0):
                     provider_pool.next_provider()
