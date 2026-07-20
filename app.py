@@ -692,5 +692,9 @@ with gr.Blocks(title="Agentic SRE Adversarial Benchmark Suite") as demo:
         ep_btn.click(fn=_run_single_ep, inputs=[task_selector], outputs=[ep_report, ep_json])
 
 
+        demo.load(fn=_gpu_warmup_and_check, inputs=None, outputs=None)
+
+
 if __name__ == "__main__":
+    _gpu_warmup_and_check()
     demo.launch(server_name="0.0.0.0", server_port=7860)
