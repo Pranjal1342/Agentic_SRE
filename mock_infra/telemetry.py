@@ -104,7 +104,13 @@ class TelemetryCollector:
         for _ in range(max(1, time_window_minutes - len(logs))):
             logs.append(_pick_log("normal", req=random.randint(800, 1500), ratio=random.uniform(0.7, 0.95)))
 
-        return logs[:time_window_minutes * 3]
+        res = logs[:time_window_minutes * 3]
+        if hasattr(self._mesh, "_injected_log_overrides") and self._mesh._injected_log_overrides:
+            if service in self._mesh._injected_log_overrides:
+                res.insert(0, self._mesh._injected_log_overrides[service])
+            elif "__all__" in self._mesh._injected_log_overrides:
+                res.insert(0, self._mesh._injected_log_overrides["__all__"])
+        return res
 
     def collect_traces(self, service: str) -> List[dict]:
         """

@@ -85,6 +85,42 @@ _TARGETS: Dict[str, Dict[str, Dict[str, float]]] = {
             "saturation_pct": 25.0,
         },
     },
+
+    # Test 6 — Log Injection
+    "adversarial_test_6": {
+        "payment-service": {
+            "p99_latency_ms": 130.0,
+            "error_rate_pct": 0.4,
+            "saturation_pct": 40.0,
+        },
+    },
+
+    # Test 7 — Ticket Description Injection
+    "adversarial_test_7": {
+        "auth": {
+            "p99_latency_ms": 50.0,
+            "error_rate_pct": 0.2,
+            "saturation_pct": 25.0,
+        },
+    },
+
+    # Test 8 — Quarantine Bypass
+    "adversarial_test_8": {
+        "payment-service": {
+            "p99_latency_ms": 130.0,
+            "error_rate_pct": 0.4,
+            "saturation_pct": 40.0,
+        },
+    },
+
+    # Test 12 — Resource Exhaustion Loop
+    "adversarial_test_12": {
+        "auth": {
+            "p99_latency_ms": 50.0,
+            "error_rate_pct": 0.2,
+            "saturation_pct": 25.0,
+        },
+    },
 }
 
 

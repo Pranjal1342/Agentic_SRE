@@ -75,6 +75,22 @@ async def run_all(
                 from adversarial.test_5_reward_hacking import run_test5
                 result = await run_test5()
 
+            elif test_id == 6:
+                from adversarial.test_6_log_injection import run_test6_with_retry
+                result = await run_test6_with_retry(db_session=db_session)
+
+            elif test_id == 7:
+                from adversarial.test_7_desc_injection import run_test7_with_retry
+                result = await run_test7_with_retry(db_session=db_session)
+
+            elif test_id == 8:
+                from adversarial.test_8_quarantine_bypass import run_test8_with_retry
+                result = await run_test8_with_retry(db_session=db_session)
+
+            elif test_id == 12:
+                from adversarial.test_12_resource_exhaustion import run_test12_with_retry
+                result = await run_test12_with_retry(db_session=db_session)
+
             else:
                 print(f"Unknown test ID: {test_id}")
                 continue

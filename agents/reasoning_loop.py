@@ -327,6 +327,19 @@ def _call_with_retry(fn, *args, **kwargs):
     raise last_exc
 
 
+def _sanitize_key_str(text: str, *keys: str) -> str:
+    """Redact API keys from strings before logging or raising exceptions."""
+    if not text:
+        return text
+    res = str(text)
+    for k in keys:
+        if k and isinstance(k, str) and len(k.strip()) > 4:
+            res = res.replace(k.strip(), "[REDACTED_API_KEY]")
+    if settings.model_api_key and len(settings.model_api_key.strip()) > 4:
+        res = res.replace(settings.model_api_key.strip(), "[REDACTED_API_KEY]")
+    return res
+
+
 def _execute_completion_with_failover(messages: List[Dict[str, Any]], tools: List[Dict[str, Any]] = OPENAI_TOOLS, tool_choice: str = "auto", max_tokens: int = 4096):
     """
     Execute chat completion across providers in ProviderPool.
@@ -347,6 +360,7 @@ def _execute_completion_with_failover(messages: List[Dict[str, Any]], tools: Lis
         client = provider_pool.get_client()
         model_name = active["model_name"]
         base_url = active["base_url"]
+        active_key = active.get("api_key", "")
 
         extra_body = {}
         if settings.model_thinking_mode == "on":
@@ -377,11 +391,12 @@ def _execute_completion_with_failover(messages: List[Dict[str, Any]], tools: Lis
             last_exc = exc
             err_msg = str(exc).lower()
             status_code = getattr(exc, "status_code", None)
+            safe_err = _sanitize_key_str(str(exc)[:150], active_key)
             if status_code in [401, 402, 403, 404] or (status_code == 400 and ("model" in err_msg or "not a valid" in err_msg or "endpoint" in err_msg)):
                 # Out of credits / auth failure / invalid model ID on this provider — rotate immediately!
-                log.warning("model.provider_error", status=status_code, provider=active["name"], error=str(exc)[:150])
+                log.warning("model.provider_error", status=status_code, provider=active["name"], error=safe_err)
                 if not provider_pool.next_provider(reason=status_code or 400):
-                    raise  # No other providers to fall back to
+                    raise RuntimeError(_sanitize_key_str(str(exc), active_key))
                 continue
             elif status_code == 429:
                 is_zhipu = "zhipu" in active.get("name", "").lower()
@@ -393,17 +408,17 @@ def _execute_completion_with_failover(messages: List[Dict[str, Any]], tools: Lis
                     provider_pool.next_provider(reason=429)
             elif (status_code and status_code >= 500) or isinstance(exc, (openai.APIConnectionError, openai.APITimeoutError)):
                 delay = min(base_delay * (2 ** ((total_attempts - 1) % max_retries)), max_delay)
-                log.warning("model.server_or_connection_error", status=status_code or type(exc).__name__, provider=active["name"], retry_in=delay, error=str(exc)[:150])
+                log.warning("model.server_or_connection_error", status=status_code or type(exc).__name__, provider=active["name"], retry_in=delay, error=safe_err)
                 time.sleep(delay)
                 if len(provider_pool.providers) > 1 and (total_attempts % 3 == 0):
                     provider_pool.next_provider(reason=status_code or type(exc).__name__)
             else:
-                raise  # Other schema / bad request errors — don't rotate
+                raise RuntimeError(_sanitize_key_str(str(exc), active_key))
         except Exception as exc:
             last_exc = exc
-            raise
+            raise RuntimeError(_sanitize_key_str(str(exc), active_key))
 
-    raise last_exc
+    raise RuntimeError(_sanitize_key_str(str(last_exc), active.get("api_key", "")))
 
 
 # ─────────────────────────────────────────────────────────────────────────────
