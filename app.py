@@ -20,6 +20,19 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import gradio as gr
 
+try:
+    import spaces
+except ImportError:
+    class _DummySpaces:
+        @staticmethod
+        def GPU(*args, **kwargs):
+            def decorator(fn):
+                return fn
+            if len(args) == 1 and callable(args[0]):
+                return args[0]
+            return decorator
+    spaces = _DummySpaces()
+
 # Prevent HF Hub token writes on read-only Space containers
 import huggingface_hub
 if not hasattr(huggingface_hub, "HfFolder"):
@@ -140,6 +153,7 @@ async def _execute_tests_with_provider(
             settings.model_name = orig_settings_model
 
 
+@spaces.GPU(duration=120)
 def run_benchmark_ui(
     test_choices: List[str],
     provider_choice: str,
@@ -303,6 +317,7 @@ with gr.Blocks(title="Agentic SRE Adversarial Benchmark Suite") as demo:
                 with gr.Accordion("Raw JSON Statistics", open=False):
                     ep_json = gr.Code(label="Stats Dump", language="json")
 
+        @spaces.GPU(duration=120)
         def _run_single_ep(task_id: str) -> Tuple[str, str]:
             try:
                 stats = asyncio.run(eval_task(task_id=task_id, n_episodes=1))
