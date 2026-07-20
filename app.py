@@ -173,7 +173,6 @@ async def _execute_tests_with_provider(
                 settings.model_name = orig_settings_model
 
 
-@spaces.GPU(duration=120)
 def run_benchmark_ui(
     test_choices: List[str],
     provider_choice: str,
@@ -233,7 +232,6 @@ def run_benchmark_ui(
         return err_msg, json.dumps({"error": safe_e}, indent=2), session_state, _get_counter_msg(session_state)
 
 
-@spaces.GPU(duration=120)
 def run_security_audit_ui(
     test_choices: List[str],
     provider_choice: str,
@@ -321,7 +319,6 @@ def run_security_audit_ui(
         return err_msg, json.dumps({"error": safe_e}, indent=2), session_state, _get_counter_msg(session_state)
 
 
-@spaces.GPU(duration=120)
 def run_custom_test_ui(
     uploaded_file: Any,
     custom_description: str,
@@ -692,7 +689,6 @@ with gr.Blocks(title="Agentic SRE Adversarial Benchmark Suite") as demo:
                 with gr.Accordion("Raw JSON Statistics", open=False):
                     ep_json = gr.Code(label="Stats Dump", language="json")
 
-        @spaces.GPU(duration=120)
         def _run_single_ep(task_id: str) -> Tuple[str, str]:
             try:
                 stats = asyncio.run(eval_task(task_id=task_id, n_episodes=1))
