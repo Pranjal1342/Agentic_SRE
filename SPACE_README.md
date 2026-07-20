@@ -1,7 +1,9 @@
 ---
 title: Agentic SRE
-sdk: docker
-license: apache-2.0
+sdk: gradio
+sdk_version: "5.12.0"
+python_version: "3.11"
+app_file: app.py
 pinned: false
 ---
 
@@ -18,7 +20,7 @@ For complete source code, architectural documentation, and offline execution ins
 
 When evaluating autonomous remediation agents, binary pass/fail scorecards or superficial reward formulas ($R_t$) are frequently misleading. An agent that resolves a high-latency alert by executing immediate destructive service restarts without verifying upstream session-cache dependencies might succeed on a simplified benchmark while causing catastrophic cascading outages in production.
 
-This public demo exposes two integrated evaluation suites wrapped in a Gradio interface (`app.py` running via Docker on port `7860`):
+This public demo exposes two integrated evaluation suites wrapped in a Gradio interface (`app.py` running via Gradio SDK on port `7860`):
 
 1. **Adversarial Benchmark Suite (Tests 1–5)**:
    Evaluates agent behavioral calibration, diagnostic depth, and specification robustness across five core open problems:
