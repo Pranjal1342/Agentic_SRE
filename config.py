@@ -27,10 +27,10 @@ class Settings(BaseSettings):
         description="'openai_compatible' (GLM, Groq, OpenRouter, Z.ai, ZenMux) or 'claude'.",
     )
     model_base_url: str = Field(
-        default="https://api.zenmux.ai/v1",
+        default="https://zenmux.ai/api/v1",
         description=(
             "Base URL for the OpenAI-compatible acting-model endpoint.\n"
-            "  Free/trial: https://api.zenmux.ai/v1  or  https://api.z.ai/v1\n"
+            "  Free/trial: https://zenmux.ai/api/v1  or  https://api.z.ai/api/paas/v4 (or /api/coding/paas/v4)\n"
             "  Paid direct: https://open.bigmodel.cn/api/paas/v4/\n"
             "  Aggregator:  https://openrouter.ai/api/v1"
         ),
@@ -40,13 +40,13 @@ class Settings(BaseSettings):
         description="API key for the acting model endpoint.",
     )
     model_name: str = Field(
-        default="z-ai/glm-5.2-free",
+        default="z-ai/glm-5.2",
         description=(
             "Model identifier string (provider-dependent).\n"
-            "  ZenMux free:     z-ai/glm-5.2-free\n"
+            "  ZenMux free:     z-ai/glm-5.2\n"
             "  Z.ai direct:     glm-5.2\n"
             "  Zhipu direct:    glm-5.2\n"
-            "  OpenRouter:      zhipu-ai/glm-5.2 (check their model list)"
+            "  OpenRouter:      z-ai/glm-5.2"
         ),
     )
     model_thinking_mode: str = Field(

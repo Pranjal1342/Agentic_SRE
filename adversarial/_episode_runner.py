@@ -184,16 +184,17 @@ async def _live_runner(
 
         step += 1
 
-    # Compute final reward
+    # Compute final reward against scenario-specific golden targets
     final_reward = None
     try:
         from graders.reward import compute_reward
+        from adversarial.task_registry import register_adversarial_tasks, get_golden_targets
+        register_adversarial_tasks()  # idempotent — ensures task_id is in TASK_REGISTRY
+        golden_targets = get_golden_targets(task_id)
         snapshots = [mesh.observe_all() for _ in range(getattr(settings, "window_probes", 3))]
         final_reward = compute_reward(
-            task_id=task_id,
-            final_obs=snapshots,
-            actions_taken=decisions,
-            quarantine_blocks=sum(1 for d in decisions if d.get("quarantine_flag")),
+            final_metrics=snapshots,
+            golden_targets=golden_targets,
         )
     except Exception as e:
         log.warning("episode_runner.reward_compute_failed", error=str(e))

@@ -27,10 +27,16 @@ _SIGNAL_WEIGHTS = {
     "saturation_pct": 0.2,
 }
 
-# Absolute max values used for normalization (beyond these = 0 score for that signal)
+# Absolute max values used for normalization (beyond these = 0 score for that signal).
+# ESTIMATES BASED ON TASK SEVERITY DATA across tasks/task_1..4 and mock_infra:
+#   - p99_latency_ms: target ceilings across tasks are 50-200ms; severe outages jump to 360-800ms.
+#     Set ceiling to 600.0ms (3x max SLA target of 200ms) so severe latency degradation scores appropriately low.
+#   - error_rate_pct: target ceilings across tasks are 0.2-1.0%; severe error cascades jump to 3.5-15%.
+#     Set ceiling to 5.0% (5x max SLA target of 1.0%) so outage error rates penalize dense reward effectively.
+#   - saturation_pct: naturally bounded at 100.0%.
 _SIGNAL_MAX = {
-    "p99_latency_ms": 5000.0,   # 5 seconds = effectively broken
-    "error_rate_pct": 50.0,      # 50% error rate = catastrophic
+    "p99_latency_ms": 600.0,
+    "error_rate_pct": 5.0,
     "saturation_pct": 100.0,
 }
 

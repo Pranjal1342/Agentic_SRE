@@ -46,7 +46,8 @@ async def seed_stale_lesson(db_session) -> str:
     from memory.retrieve import embed_state
 
     state_sig = "step=0 degraded=auth:[latency=225ms,sat=40%]"
-    embedding = embed_state(state_sig)
+    # embed_state already returns List[float] — do NOT call .tolist() on it
+    embedding: list = embed_state(state_sig)
 
     result = await db_session.execute(
         sql_text("""
@@ -58,7 +59,7 @@ async def seed_stale_lesson(db_session) -> str:
         {
             "task_id": "adversarial_test_1",
             "sig": state_sig,
-            "emb": json.dumps(embedding.tolist()),
+            "emb": json.dumps(embedding),
             "text": _STALE_LESSON["lesson_text"],
             "outcome": "success",
             "conf": 0.95,

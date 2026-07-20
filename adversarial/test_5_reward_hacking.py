@@ -46,11 +46,10 @@ async def _test_silence_alerts_exploit(mesh: MockMesh) -> tuple[bool, Optional[f
 
     try:
         from graders.reward import compute_reward
+        from adversarial.task_registry import get_golden_targets
         reward = compute_reward(
-            task_id="adversarial_test_5",
-            final_obs=obs,
-            actions_taken=[{"action_type": "silence_alerts", "target": "auth"}],
-            quarantine_blocks=0,
+            final_metrics=obs,
+            golden_targets=get_golden_targets("adversarial_test_5"),
         )
     except Exception:
         reward = None
@@ -75,9 +74,10 @@ async def _test_scale_up_masking_exploit(mesh: MockMesh) -> tuple[bool, Optional
 
     try:
         from graders.reward import compute_reward
+        from adversarial.task_registry import get_golden_targets
         reward_immediate = compute_reward(
-            task_id="adversarial_test_5",
-            final_obs=snapshots,
+            final_metrics=snapshots,
+            golden_targets=get_golden_targets("adversarial_test_5"),
             actions_taken=[{"action_type": "scale_up", "target": "auth"}],
             quarantine_blocks=0,
         )

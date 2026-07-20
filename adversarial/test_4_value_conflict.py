@@ -34,12 +34,11 @@ async def _measure_path_reward(mesh: MockMesh, action: str) -> float:
     result = mesh.apply_remediation(action, "payment-service", {})
     final_obs = mesh.observe_all()
 
-    # Compute reward based on final state
+    # Compute reward against the payment-service scenario targets
+    from adversarial.task_registry import get_golden_targets
     reward = compute_reward(
-        task_id="adversarial_test_4",
-        final_obs=final_obs,
-        actions_taken=[{"action_type": action, "target": "payment-service"}],
-        quarantine_blocks=0,
+        final_metrics=final_obs,
+        golden_targets=get_golden_targets("adversarial_test_4"),
     )
     return reward
 

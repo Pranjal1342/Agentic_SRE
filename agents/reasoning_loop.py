@@ -158,6 +158,7 @@ class ProviderPool:
     def __init__(self):
         self.providers = []
         self.current_idx = 0
+        self.provider_cooldowns: Dict[int, Dict[str, Any]] = {}
         self._init_providers()
 
     def _init_providers(self):
@@ -172,11 +173,11 @@ class ProviderPool:
 
         # 2. Add all known backup tiers if present or configured in environment variables, ordered strictly by Tier priority
         known_tiers = [
-            {"name": "ZenMux (Tier 1)", "base_url": "https://api.zenmux.ai/v1", "api_key": (settings.zenmux_api_key or "").strip(), "model_name": "z-ai/glm-5.2-free"},
+            {"name": "ZenMux (Tier 1)", "base_url": "https://zenmux.ai/api/v1", "api_key": (settings.zenmux_api_key or "").strip(), "model_name": "z-ai/glm-5.2"},
             {"name": "Z.ai Direct (Tier 2)", "base_url": "https://api.z.ai/v1", "api_key": (settings.zai_api_key or "").strip(), "model_name": "glm-5.2"},
             {"name": "Zhipu Direct (Tier 3)", "base_url": "https://open.bigmodel.cn/api/paas/v4/", "api_key": (settings.zhipu_api_key or "").strip(), "model_name": "glm-5.2"},
             {"name": "OpenRouter (Tier 4)", "base_url": "https://openrouter.ai/api/v1", "api_key": (settings.openrouter_api_key or "").strip(), "model_name": "z-ai/glm-5.2"},
-            {"name": "HuggingFace Router (Tier 0)", "base_url": "https://router.huggingface.co/v1", "api_key": (settings.hf_api_key or "").strip(), "model_name": "zai-org/GLM-5.2:novita"},
+            {"name": "HuggingFace Router (Tier 0)", "base_url": "https://router.huggingface.co/v1", "api_key": (settings.hf_api_key or "").strip(), "model_name": "zai-org/GLM-5.2"},
         ]
         seen_keys = {p["api_key"] for p in self.providers}
         for t in known_tiers:
@@ -184,18 +185,79 @@ class ProviderPool:
                 self.providers.append(t)
                 seen_keys.add(t["api_key"])
 
-    def next_provider(self) -> bool:
+    def _get_cooldown_duration(self, reason: Optional[Union[int, str]]) -> float:
+        if reason == 402 or str(reason) == "402":
+            return 6 * 3600.0  # 6 hours for quota exhaustion
+        elif reason in [401, 403, 404] or str(reason) in ["401", "403", "404"]:
+            return 6 * 3600.0  # 6 hours for auth / forbidden / endpoint errors
+        elif reason == 429 or str(reason) == "429" or (isinstance(reason, int) and reason >= 500):
+            return 5 * 60.0    # 5 minutes for rate limit or 5xx server errors
+        else:
+            return 5 * 60.0    # 5 minutes default
+
+    def _clean_expired_cooldowns(self) -> None:
+        now = time.time()
+        expired = []
+        for idx, info in self.provider_cooldowns.items():
+            duration = self._get_cooldown_duration(info.get("reason"))
+            if now - info["failover_at"] >= duration:
+                expired.append(idx)
+        for idx in expired:
+            log.info(
+                "api.provider_pool_cooldown_expired",
+                provider_idx=idx,
+                provider_name=self.providers[idx]["name"],
+                reason=self.provider_cooldowns[idx].get("reason"),
+            )
+            del self.provider_cooldowns[idx]
+
+    def next_provider(self, reason: Optional[Union[int, str]] = None) -> bool:
         if len(self.providers) <= 1:
             log.warning("api.provider_failover_aborted", current_idx=self.current_idx, total_providers=len(self.providers), reason="No remaining providers to rotate to")
             return False
-        self.current_idx = (self.current_idx + 1) % len(self.providers)
+
+        # Record cooldown for the failing provider
+        self.provider_cooldowns[self.current_idx] = {
+            "failover_at": time.time(),
+            "reason": reason,
+        }
+        self._clean_expired_cooldowns()
+
+        # Find next candidate provider NOT inside its cooldown window
+        candidate = (self.current_idx + 1) % len(self.providers)
+        attempts = 0
+        while candidate in self.provider_cooldowns and attempts < len(self.providers) - 1:
+            candidate = (candidate + 1) % len(self.providers)
+            attempts += 1
+
+        if candidate in self.provider_cooldowns:
+            log.warning("api.provider_failover_aborted", current_idx=self.current_idx, total_providers=len(self.providers), reason="All backup providers are currently inside their cooldown windows")
+            return False
+
+        self.current_idx = candidate
         p = self.providers[self.current_idx]
-        log.warning("api.provider_failover", current_idx=self.current_idx, total_providers=len(self.providers), switched_to=p["name"], base_url=p["base_url"], model=p["model_name"])
+        log.warning("api.provider_failover", current_idx=self.current_idx, total_providers=len(self.providers), switched_to=p["name"], base_url=p["base_url"], model=p["model_name"], failover_reason=reason)
         return True
 
     def get_active(self) -> Dict[str, Any]:
+        self._clean_expired_cooldowns()
         if not self.providers:
             return {"base_url": settings.model_base_url, "api_key": settings.model_api_key or "none", "model_name": settings.model_name, "name": "Default"}
+
+        # Periodic retry-from-top: check if an earlier tier than current_idx has expired/recovered from cooldown
+        for i in range(self.current_idx):
+            if i not in self.provider_cooldowns:
+                log.info("api.provider_pool_retry_earlier_tier", previous_idx=self.current_idx, switched_to_idx=i, provider_name=self.providers[i]["name"])
+                self.current_idx = i
+                break
+
+        # If current_idx itself is inside its cooldown window, advance to the first available non-cooldown tier
+        if self.current_idx in self.provider_cooldowns:
+            for i in range(len(self.providers)):
+                if i not in self.provider_cooldowns:
+                    self.current_idx = i
+                    break
+
         return self.providers[self.current_idx]
 
     def get_client(self):
@@ -304,12 +366,13 @@ def _execute_completion_with_failover(messages: List[Dict[str, Any]], tools: Lis
             )
         except openai.RateLimitError as exc:
             last_exc = exc
-            delay = min(base_delay * (2 ** ((total_attempts - 1) % max_retries)), max_delay)
-            log.warning("model.rate_limited", provider=active["name"], attempt=total_attempts, retry_in=delay)
+            is_zhipu = "zhipu" in active.get("name", "").lower()
+            rotate_threshold = 6 if is_zhipu else 2
+            delay = min(base_delay * (2 ** ((total_attempts - 1) % (6 if is_zhipu else max_retries))), 30.0 if is_zhipu else max_delay)
+            log.warning("model.rate_limited", provider=active["name"], attempt=total_attempts, retry_in=delay, rotate_threshold=rotate_threshold)
             time.sleep(delay)
-            # If we hit multiple rate limits, rotate provider to avoid blocking
-            if len(provider_pool.providers) > 1 and (total_attempts % 2 == 0):
-                provider_pool.next_provider()
+            if len(provider_pool.providers) > 1 and (total_attempts % rotate_threshold == 0):
+                provider_pool.next_provider(reason=429)
         except (openai.APIStatusError, openai.APIConnectionError, openai.APITimeoutError) as exc:
             last_exc = exc
             err_msg = str(exc).lower()
@@ -317,21 +380,23 @@ def _execute_completion_with_failover(messages: List[Dict[str, Any]], tools: Lis
             if status_code in [401, 402, 403, 404] or (status_code == 400 and ("model" in err_msg or "not a valid" in err_msg or "endpoint" in err_msg)):
                 # Out of credits / auth failure / invalid model ID on this provider — rotate immediately!
                 log.warning("model.provider_error", status=status_code, provider=active["name"], error=str(exc)[:150])
-                if not provider_pool.next_provider():
+                if not provider_pool.next_provider(reason=status_code or 400):
                     raise  # No other providers to fall back to
                 continue
             elif status_code == 429:
-                delay = min(base_delay * (2 ** ((total_attempts - 1) % max_retries)), max_delay)
-                log.warning("model.status_429", provider=active["name"], retry_in=delay)
+                is_zhipu = "zhipu" in active.get("name", "").lower()
+                rotate_threshold = 6 if is_zhipu else 2
+                delay = min(base_delay * (2 ** ((total_attempts - 1) % (6 if is_zhipu else max_retries))), 30.0 if is_zhipu else max_delay)
+                log.warning("model.status_429", provider=active["name"], attempt=total_attempts, retry_in=delay, rotate_threshold=rotate_threshold)
                 time.sleep(delay)
-                if len(provider_pool.providers) > 1 and (total_attempts % 2 == 0):
-                    provider_pool.next_provider()
+                if len(provider_pool.providers) > 1 and (total_attempts % rotate_threshold == 0):
+                    provider_pool.next_provider(reason=429)
             elif (status_code and status_code >= 500) or isinstance(exc, (openai.APIConnectionError, openai.APITimeoutError)):
                 delay = min(base_delay * (2 ** ((total_attempts - 1) % max_retries)), max_delay)
                 log.warning("model.server_or_connection_error", status=status_code or type(exc).__name__, provider=active["name"], retry_in=delay, error=str(exc)[:150])
                 time.sleep(delay)
                 if len(provider_pool.providers) > 1 and (total_attempts % 3 == 0):
-                    provider_pool.next_provider()
+                    provider_pool.next_provider(reason=status_code or type(exc).__name__)
             else:
                 raise  # Other schema / bad request errors — don't rotate
         except Exception as exc:
