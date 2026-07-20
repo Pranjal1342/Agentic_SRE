@@ -24,7 +24,454 @@ This framework implements an OpenEnv-compatible containerized RL/agentic environ
 
 ## System Architecture
 
-The system architecture is structured into five core subsystems matching the specification outlined in `agentic_sre_rebuild_brief.md`:
+### 1. High-Level Architecture Overview
+
+```mermaid
+graph TB
+    subgraph PUBLIC["Public Interfaces"]
+        GR["Gradio Web App\n(app.py · port 7860)\nBYOK · Free-Trial · BYO-Test"]
+        CLI["CLI Entrypoint\n(inference.py)\n--task 1..4"]
+    end
+
+    subgraph EVAL["Evaluation Harness"]
+        ADV["Adversarial Suite\n(adversarial/)\nTests 1–5 Behavioral\nTests 6–14 Security"]
+        GRADE["Reward Grader\n(graders/reward.py)\nDense Rₜ scoring"]
+    end
+
+    subgraph AGENT["Agent Core"]
+        RL["Reasoning Loop\n(agents/reasoning_loop.py)\nMulti-turn LLM orchestration"]
+        QA["Quarantine Agent\n(agents/quarantine_agent.py)\nSafety interception gate"]
+    end
+
+    subgraph INFRA["Simulated Infrastructure (MockMesh)"]
+        MESH["Service Mesh\n(mock_infra/mesh.py)\nauth · api-gateway\nuser-service · payment-service"]
+        TEL["Telemetry Engine\n(mock_infra/telemetry.py)\nParametric decay + Gaussian noise"]
+        MDBK["Mock DB\n(mock_infra/mock_db.py)\nIn-memory query simulation"]
+    end
+
+    subgraph TOOLS["MCP Tool Layer"]
+        DIAG["Diagnostic Tools\nlog_inspection · get_metric\nobserve_service · diagnostic_query\nretrieve_runbook"]
+        REM["Remediation Tools\nscale_up · restart_service\nrollback · graceful_drain\nsilence_alerts"]
+    end
+
+    subgraph ENV["Environment Orchestration"]
+        FSM["FSM Controller\n(server/fsm.py)\nIDLE→INVESTIGATING→MITIGATING\n→VERIFYING→RESOLVED/ESCALATED"]
+        PIPE["Pipeline\n(server/pipeline.py)"]
+        SAPP["Server App\n(server/app.py · port 8000)\nFastAPI endpoints"]
+    end
+
+    subgraph MEM["Memory & Learning"]
+        DB["PostgreSQL + pgvector\n(memory/models.py · db.py)\nepisodes · decisions · causal_edges"]
+        WRITE["Trace Writer\n(memory/write.py)"]
+        RETR["Retrieval Engine\n(memory/retrieve.py)\nCosine similarity lookup"]
+        CONS["Consolidation Job\n(memory/consolidate.py)\nOffline batch · 60-min interval"]
+        CRED["Credit Assignment\n(memory/credit_assignment.py)\nCausal trajectory scoring"]
+        RAG["Runbook RAG\n(rag/runbook_rag.py)\nVector index lookup"]
+    end
+
+    subgraph PROV["LLM Provider Pool (config.py)"]
+        P1["ZenMux\nTier 1"]
+        P2["Z.ai Direct\nTier 2"]
+        P3["Zhipu Direct\nTier 3 (Verified Working)"]
+        P4["OpenRouter\nTier 4"]
+        P5["HuggingFace\nTier 5"]
+    end
+
+    subgraph KB["Knowledge Base"]
+        RB["Runbooks\n(knowledge_base/)"]
+    end
+
+    GR --> RL
+    CLI --> RL
+    ADV --> RL
+    ADV --> GRADE
+
+    RL --> QA
+    QA --> TOOLS
+    TOOLS --> DIAG
+    TOOLS --> REM
+    DIAG --> MESH
+    REM --> MESH
+    MESH --> TEL
+    MESH --> MDBK
+
+    RL --> FSM
+    FSM --> PIPE
+    PIPE --> SAPP
+
+    RL --> MEM
+    WRITE --> DB
+    RETR --> DB
+    CONS --> DB
+    CRED --> CONS
+    RAG --> RB
+    RETR --> RAG
+
+    RL --> PROV
+    GRADE --> FSM
+```
+
+---
+
+### 2. Episode Lifecycle — Finite State Machine
+
+```mermaid
+stateDiagram-v2
+    [*] --> IDLE : Episode Initialized
+
+    IDLE --> INVESTIGATING : Agent begins diagnosis
+    INVESTIGATING --> MITIGATING : Diagnostic evidence gathered\n(log_inspection / get_metric confirmed)
+    INVESTIGATING --> ESCALATED : Max steps exceeded\nor confidence too low
+    MITIGATING --> VERIFYING : Remediation action executed
+    VERIFYING --> RESOLVED : Metrics recover within\nsustained probe window (3×)
+    VERIFYING --> MITIGATING : Metrics still degraded\n(additional action needed)
+    VERIFYING --> ESCALATED : Max steps exceeded
+    MITIGATING --> QUARANTINED : Quarantine Agent blocks\nunsafe/unverified action
+    QUARANTINED --> MITIGATING : Agent provides required\ndiagnostic evidence
+
+    RESOLVED --> [*] : Post-episode consolidation triggered
+    ESCALATED --> [*] : Post-episode consolidation triggered
+```
+
+**Max steps per episode:** `20` (configurable)  
+**Episode timeout:** `300 seconds`  
+**Sustained verification window:** `3 metric probes × 2s interval`
+
+---
+
+### 3. Component Breakdown
+
+#### 3.1 Environment Layer
+
+| Component | File | Responsibility |
+|---|---|---|
+| **Service Mesh** | `mock_infra/mesh.py` | 4-service dependency graph with fault injection |
+| **Adversarial Mesh** | `mock_infra/mesh_adversarial.py` | Extended mesh for behavioral stress tests |
+| **Telemetry Engine** | `mock_infra/telemetry.py` | Parametric decay formulas + Gaussian noise |
+| **Mock Database** | `mock_infra/mock_db.py` | In-memory SQL query simulation |
+| **FSM Controller** | `server/fsm.py` | Episode state transitions & lifecycle gating |
+| **Pipeline** | `server/pipeline.py` | Orchestrates per-episode execution flow |
+| **Server App** | `server/app.py` | FastAPI REST endpoints (port 8000) |
+
+**MockMesh Topology:**
+
+```mermaid
+graph LR
+    GW["api-gateway"]
+    AUTH["auth"]
+    USER["user-service"]
+    PAY["payment-service"]
+
+    GW -->|depends on| AUTH
+    GW -->|depends on| USER
+    USER -->|depends on| PAY
+    PAY -->|DB pool| DB[(PostgreSQL\nMock)]
+
+    style GW fill:#4f46e5,color:#fff
+    style AUTH fill:#0891b2,color:#fff
+    style USER fill:#059669,color:#fff
+    style PAY fill:#d97706,color:#fff
+```
+
+**Telemetry Metrics per Service:**
+- `p99_latency_ms` — Tail latency
+- `error_rate_pct` — Error rate percentage
+- `cpu_util_pct` — CPU utilization
+- `memory_util_pct` — Memory utilization
+- `db_pool_saturation_pct` — DB pool saturation
+
+---
+
+#### 3.2 MCP Tool Layer (`mcp/tools.py`)
+
+All tools are strictly typed Pydantic definitions. **Zero `exec()`, `eval()`, or `subprocess.run()` calls** — all execution is pure dictionary state mutation.
+
+```mermaid
+graph LR
+    subgraph DIAGNOSTIC["Diagnostic Tools"]
+        T1["log_inspection\nRead service logs"]
+        T2["get_metric\nFetch telemetry snapshot"]
+        T3["observe_service\nFull service state"]
+        T4["retrieve_runbook\nKB lookup via RAG"]
+        T5["diagnostic_query\nStructured DB query"]
+    end
+    subgraph REMEDIATION["Remediation Tools"]
+        R1["scale_up\nIncrease service replicas"]
+        R2["restart_service\nRestart a named service"]
+        R3["rollback\nRevert to previous version"]
+        R4["graceful_drain\nDrain connections safely"]
+        R5["silence_alerts\nMute alert channel"]
+    end
+
+    QA["Quarantine Agent\n(Safety Gate)"] -->|approved| REMEDIATION
+    QA -->|pass-through| DIAGNOSTIC
+```
+
+**Quarantine prerequisites:** Remediation tools require at least one prior `log_inspection` **or** `get_metric` call in the episode trace before execution is permitted.
+
+---
+
+#### 3.3 Reasoning & Safety Layer
+
+```mermaid
+sequenceDiagram
+    participant LLM as LLM Provider
+    participant RL as Reasoning Loop
+    participant QA as Quarantine Agent
+    participant MCP as MCP Tools
+    participant MESH as MockMesh
+
+    loop per step (max 20)
+        RL->>LLM: system_prompt + episode_trace
+        LLM-->>RL: tool_call or final_answer
+        RL->>QA: intercept(tool_call)
+        alt Remediation call + no diagnostic evidence
+            QA-->>RL: BLOCKED — requires evidence first
+        else Safe / diagnostic tool
+            QA-->>RL: APPROVED
+            RL->>MCP: execute(tool_call)
+            MCP->>MESH: state mutation / read
+            MESH-->>MCP: observation payload
+            MCP-->>RL: append to trace
+        end
+    end
+    RL->>RL: grade episode (Rₜ)
+```
+
+**Quarantine Agent checks:**
+1. Is the action a remediation tool?
+2. Does the episode trace contain prior `log_inspection` or `get_metric`?
+3. Is the target service in an active locked/quarantined state?
+
+---
+
+#### 3.4 Memory & Learning Layer
+
+```mermaid
+graph TB
+    EP["Episode Completes"]
+    EP --> WRITE["memory/write.py\nPersist: actions, observations,\nrationale strings per step"]
+
+    subgraph PG["PostgreSQL + pgvector"]
+        TBL1["episodes table\nepisode_id · task · outcome · reward"]
+        TBL2["decisions table\nstep · action · rationale · embedding"]
+        TBL3["causal_edges table\nsource_action → consequence\nweight · half-life decay"]
+    end
+
+    WRITE --> TBL1
+    WRITE --> TBL2
+
+    EP --> CONS["memory/consolidate.py\n(runs every 60 min)\nCluster decisions by embedding"]
+    CONS --> CRED["memory/credit_assignment.py\ncompute_trajectory_credit()\nLink actions → outcomes"]
+    CRED --> TBL3
+
+    TBL2 --> RETR["memory/retrieve.py\nCosine similarity ≥ 0.75\nReturn top-3 lessons"]
+    TBL3 --> RETR
+
+    RETR --> RL["Reasoning Loop\n(next episode context)"]
+
+    RAG["rag/runbook_rag.py\nKnowledge Base vector index"] --> RL
+```
+
+**Key parameters:**
+| Parameter | Default |
+|---|---|
+| Similarity threshold | `0.75` cosine |
+| Retrieval top-k | `3` lessons |
+| Consolidation interval | `60 minutes` |
+| Min cluster size | `3` decisions |
+| Lesson decay half-life | `30 days` |
+
+> [!NOTE]
+> The `causal_edges` table is a **retroactive** measurement tool. It records edge patterns (e.g., `api-gateway:scale_up → user-service:pool_exhaustion`) *after* an episode completes during consolidation, not as a pre-action prevention gate. Future episodes can then retrieve this pattern to inform decisions.
+
+---
+
+#### 3.5 LLM Provider Failover Pool
+
+```mermaid
+graph LR
+    REQ["Inference Request"]
+
+    REQ --> T1["ZenMux\nTier 1\n[Requires Funding]"]
+    REQ --> T2["Z.ai Direct\nTier 2\n[Requires Correction]"]
+    REQ --> T3["Zhipu Direct\nTier 3\n[Confirmed Working]\nglm-5.2"]
+    REQ --> T4["OpenRouter\nTier 4\n[Requires Credits]"]
+    REQ --> T5["HuggingFace\nTier 5\n[Requires Quota]"]
+
+    T3 -->|HTTP 200| RESP["Response"]
+    T1 -->|HTTP 402→ failover| T2
+    T2 -->|HTTP 404→ failover| T3
+    T4 -->|HTTP 402→ failover| T5
+
+    style T3 fill:#059669,color:#fff
+    style T1 fill:#d97706,color:#fff
+    style T2 fill:#dc2626,color:#fff
+    style T4 fill:#d97706,color:#fff
+    style T5 fill:#d97706,color:#fff
+```
+
+**Failover triggers:** HTTP `402`, `429`, `503`  
+**Retry policy:** Max `5` retries · Exponential backoff `2s` base, `60s` cap
+
+---
+
+#### 3.6 Reward Function (`graders/reward.py`)
+
+The dense reward `Rₜ` evaluates **worst-case degradation across a sustained temporal verification window** rather than single-point snapshots:
+
+```
+Rₜ = f(
+    metric_recovery_score,    # Did service metrics improve?
+    verification_depth_score, # Were enough diagnostic steps taken?
+    escalation_penalty,       # Was the episode escalated unnecessarily?
+    safety_compliance_score,  # Did the agent comply with Quarantine gates?
+    causal_accuracy_score     # Did remediation match root-cause evidence?
+)
+```
+
+Probing: **3 sustained samples** at **2-second intervals** during `VERIFYING` state.
+
+---
+
+#### 3.7 Evaluation & Adversarial Harness
+
+```mermaid
+graph TB
+    subgraph BEHAVIORAL["Behavioral Audit (Tests 1–5)"]
+        T1B["Test 1: Distribution Shift\nOut-of-distribution fault injection"]
+        T2B["Test 2: Diagnostic Calibration\nCalibration curve depth audit"]
+        T3B["Test 3: Delayed Consequence\nNon-local causal edge detection"]
+        T4B["Test 4: Value Conflict\nSafety vs. availability tradeoff"]
+        T5B["Test 5: Reward Hacking\nDegenerate shortcut detection"]
+    end
+
+    subgraph SECURITY["Security Audit (Tests 6–14)"]
+        T6S["Test 6: Log Injection\nPrompt injection via log payloads"]
+        T7S["Test 7: Desc Injection\nPrompt injection via task descriptions"]
+        T8S["Test 8: Quarantine Bypass\nForce unsafe remediation"]
+        T9S["Tests 9–14: Static checks\nSQL injection · SSRF · Secret redaction\nSession isolation · Resource exhaustion"]
+    end
+
+    RUNNER["adversarial/runner.py\n--no-db mode"] --> BEHAVIORAL
+    SECAUDIT["adversarial/security_audit.py"] --> SECURITY
+
+    BEHAVIORAL --> GRADER["adversarial/grader.py\nVERDICT: PASS / FAIL / architecture_gap\n/ reward_function_gap"]
+    SECURITY --> GRADER
+```
+
+> [!IMPORTANT]
+> A `FAIL` verdict or gap classification (`architecture_gap`, `reward_function_gap`) is **expected and valid** — it indicates the test successfully exposed an open behavioral boundary in autonomous SRE alignment. It is a diagnostic measurement, not a broken test.
+
+---
+
+### 4. Deployment Topology
+
+```mermaid
+graph TB
+    subgraph DOCKER["Docker Compose Stack"]
+        subgraph SRE_CONTAINER["sre-env container (port 8000)"]
+            APP["app.py\nGradio UI (port 7860)"]
+            SERVER["server/app.py\nFastAPI REST (port 8000)"]
+            AGENT["Agent Core\nReasoning Loop + Quarantine"]
+            TOOLS_D["MCP Tools"]
+            MOCK["MockMesh\n(in-process)"]
+        end
+
+        subgraph PG_CONTAINER["postgres container (pgvector)"]
+            PGDB["PostgreSQL 15\n+ pgvector extension\nPort 15432"]
+            SQLINIT["init.sql\nSchema bootstrap"]
+        end
+
+        SRE_CONTAINER -->|"asyncpg\nPostgresURL"| PG_CONTAINER
+        PGDB --> SQLINIT
+    end
+
+    subgraph VOLUMES["Volumes"]
+        PGDATA["pgdata\n(persistent DB storage)"]
+        KB_VOL["knowledge_base/\n(read-only mount)"]
+    end
+
+    PG_CONTAINER --> PGDATA
+    SRE_CONTAINER --> KB_VOL
+
+    subgraph EXTERNAL["External Services"]
+        LLMPROV["LLM Providers\n(ZenMux / Z.ai / Zhipu\n/ OpenRouter / HuggingFace)"]
+    end
+
+    SRE_CONTAINER --> LLMPROV
+
+    style SRE_CONTAINER fill:#1e1b4b,color:#c7d2fe
+    style PG_CONTAINER fill:#064e3b,color:#a7f3d0
+    style VOLUMES fill:#292524,color:#d6d3d1
+    style EXTERNAL fill:#431407,color:#fed7aa
+```
+
+**Execution modes:**
+
+| Mode | DB | Command |
+|---|---|---|
+| **In-memory** | None | `python inference.py --task 1` |
+| **Persistent** | PostgreSQL | `docker-compose up -d` |
+| **Behavioral audit** | None | `python -m adversarial.runner --no-db` |
+| **Security audit** | None | `python -m adversarial.security_audit` |
+| **Gradio demo** | Optional | `python app.py` |
+
+---
+
+### 5. Task Definitions
+
+| Task | Fault Scenario | Root Cause |
+|---|---|---|
+| `task_1` | `auth` service elevated latency | Certificate expiry / token verification overhead |
+| `task_2` | `api-gateway` error spike | Upstream dependency timeout cascade |
+| `task_3` | `user-service` pool exhaustion | Delayed consequence of `api-gateway` scale-up |
+| `task_4` | `payment-service` DB saturation | Connection leak under peak load |
+
+---
+
+### 6. Data Flow Summary
+
+```mermaid
+flowchart LR
+    INPUT["Task Definition\n(fault_config + target_service)"]
+
+    INPUT --> MESH_F["MockMesh\nFault Injection"]
+    MESH_F --> TEL_F["Telemetry\nMetric generation"]
+    TEL_F --> AGENT_F["Reasoning Loop\n(LLM + tool calls)"]
+    AGENT_F --> QA_F["Quarantine\nSafety gate"]
+    QA_F --> MCP_F["MCP Tools\nDiagnostic / Remediation"]
+    MCP_F --> MESH_F
+
+    AGENT_F --> WRITE_F["Trace Writer\nmemory/write.py"]
+    WRITE_F --> PG_F["PostgreSQL\n(episodes · decisions)"]
+
+    PG_F --> CONS_F["Consolidation\n(async · 60 min)"]
+    CONS_F --> CRED_F["Credit Assignment\ncausal_edges"]
+    CRED_F --> PG_F
+
+    PG_F --> RETR_F["Retrieval\n(cosine sim ≥ 0.75)"]
+    RETR_F --> AGENT_F
+
+    AGENT_F --> FSM_F["FSM\nState transitions"]
+    FSM_F --> GRADE_F["Grader\nDense Rₜ reward"]
+    GRADE_F --> OUT["Episode Outcome\n(RESOLVED / ESCALATED)"]
+```
+
+---
+
+### 7. Deferred / Future Capabilities
+
+| Capability | Status | Trigger Condition |
+|---|---|---|
+| **DPO Fine-tuning** | [Not Built] | Plateau in `no_match_rate` metric across epochs |
+| **SICA Self-editing** | [Deferred] | `Rₜ` improvement plateau over N consecutive evaluation epochs |
+| **Dynamic Provider Routing** | [Static Failover Only] | Requires real-time TPS measurement per provider |
+| **Real-time Causal Prevention** | [Retroactive Only] | Requires `causal_edges` history from prior episodes |
+
+---
+
+## Repository Structure
 
 ```
 agent_sre_env/
@@ -44,29 +491,6 @@ agent_sre_env/
 ├── init.sql                            # PostgreSQL schema initialization for causal edges tracking
 └── app.py                              # Gradio web application exposing public stress-test suites
 ```
-
-### 1. Environment Layer (`mock_infra/` & `server/fsm.py`)
-- **Simulated Topology**: Models a four-service microservice mesh (`auth`, `api-gateway`, `user-service`, `payment-service`) with explicit dependency graph edges.
-- **Deterministic Telemetry with Noise**: Generates realistic metrics (`p99_latency_ms`, `error_rate_pct`, `cpu_util_pct`, `memory_util_pct`, `db_pool_saturation_pct`) derived from underlying parametric decay states plus small Gaussian variance (`mock_infra/telemetry.py`).
-- **FSM Episode Lifecycle**: Manages episode transitions (`server/fsm.py`) across structured states (`IDLE`, `INVESTIGATING`, `MITIGATING`, `VERIFYING`, `RESOLVED`, `ESCALATED`, `QUARANTINED`), enforcing maximum step limits (`max_steps_per_episode = 12`).
-
-### 2. MCP Tool Layer (`mcp/tools.py`)
-All interaction between the agent and the simulated mesh occurs through strictly typed Pydantic tool definitions. To prevent command injection and boundary violations, tools execute purely via dictionary state lookups and modifications (`zero exec(), eval(), or subprocess.run() calls`):
-- **Diagnostic Tools**: `log_inspection`, `get_metric`, `observe_service`, `retrieve_runbook`, `diagnostic_query`.
-- **Remediation Tools**: `scale_up`, `restart_service`, `rollback`, `graceful_drain`, `silence_alerts`.
-
-### 3. Reasoning Loop (`agents/reasoning_loop.py` & `agents/quarantine_agent.py`)
-- **Structured Tool-Calling Loop**: Orchestrates iterative multi-turn LLM generation (`agents/reasoning_loop.py`), parsing tool calls, executing actions against the mesh, and appending observations to the episode trace.
-- **Quarantine Agent Wrapper**: Acts as an immediate safety interception gate (`agents/quarantine_agent.py`). It intercepts remediation actions before execution, validating that required prerequisite diagnostic evidence (`log_inspection` or `get_metric`) exists and blocking unsafe destructive overrides during active incidents or locked states.
-
-### 4. Memory Layer (`memory/`)
-- **Causal & Episodic Models**: Defines SQLAlchemy tables (`episodes`, `decisions`, `causal_edges`) supporting both asynchronous (`AsyncEngine`) and synchronous (`Engine`) database backends (`memory/models.py`, `memory/db.py`).
-- **Trace Persistence**: Records complete action traces, observation payloads, and rationale strings at each step (`memory/write.py`).
-- **Runbook & Edge Retrieval**: Retrieves relevant historical incident experiences and known causal relationships based on active symptom signatures (`memory/retrieve.py`).
-
-### 5. Consolidation Job (`memory/consolidate.py` & `memory/credit_assignment.py`)
-- **Post-Episode Consolidation**: Executes offline batch analysis after episode completion (`consolidate_episode_memory`).
-- **Causal Credit Assignment**: Evaluates multi-step trajectories to assign causal credit (`compute_trajectory_credit`), linking remediation actions to eventual metric recovery or delayed degradation across non-local boundaries.
 
 ---
 
