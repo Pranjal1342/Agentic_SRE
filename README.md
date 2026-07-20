@@ -27,88 +27,121 @@ This framework implements an OpenEnv-compatible containerized RL/agentic environ
 ### 1. High-Level Architecture Overview
 
 ```mermaid
+%% ============================================================
+%% AGENTIC SRE — HIGH-LEVEL ARCHITECTURE
+%% Flow reads top -> bottom: entry points feed the Agent Core,
+%% which fans out to execution, orchestration, memory, and the
+%% LLM provider pool. Green = entry point. Orange = terminal node.
+%% ============================================================
 graph TB
-    subgraph PUBLIC["Public Interfaces"]
-        GR["Gradio Web App\n(app.py · port 7860)\nBYOK · Free-Trial · BYO-Test"]
-        CLI["CLI Entrypoint\n(inference.py)\n--task 1..4"]
-    end
 
-    subgraph EVAL["Evaluation Harness"]
-        ADV["Adversarial Suite\n(adversarial/)\nTests 1–5 Behavioral\nTests 6–14 Security"]
-        GRADE["Reward Grader\n(graders/reward.py)\nDense Rₜ scoring"]
-    end
+  %% ---------- 1. ENTRY POINTS ----------
+  subgraph PUBLIC["Public Interfaces"]
+    GR["Gradio Web App\n(app.py · port 7860)\nBYOK · Free-Trial · BYO-Test"]
+    CLI["CLI Entrypoint\n(inference.py)\n--task 1..4"]
+  end
 
-    subgraph AGENT["Agent Core"]
-        RL["Reasoning Loop\n(agents/reasoning_loop.py)\nMulti-turn LLM orchestration"]
-        QA["Quarantine Agent\n(agents/quarantine_agent.py)\nSafety interception gate"]
-    end
+  subgraph EVAL["Evaluation Harness"]
+    ADV["Adversarial Suite\n(adversarial/)\nTests 1–5 Behavioral\nTests 6–14 Security"]
+    GRADE["Reward Grader\n(graders/reward.py)\nDense Rₜ scoring"]
+  end
 
-    subgraph INFRA["Simulated Infrastructure (MockMesh)"]
-        MESH["Service Mesh\n(mock_infra/mesh.py)\nauth · api-gateway\nuser-service · payment-service"]
-        TEL["Telemetry Engine\n(mock_infra/telemetry.py)\nParametric decay + Gaussian noise"]
-        MDBK["Mock DB\n(mock_infra/mock_db.py)\nIn-memory query simulation"]
-    end
+  %% ---------- 2. AGENT CORE (central hub) ----------
+  subgraph AGENT["Agent Core"]
+    RL["Reasoning Loop\n(agents/reasoning_loop.py)\nMulti-turn LLM orchestration"]
+    QA["Quarantine Agent\n(agents/quarantine_agent.py)\nSafety interception gate"]
+  end
 
-    subgraph TOOLS["MCP Tool Layer"]
-        DIAG["Diagnostic Tools\nlog_inspection · get_metric\nobserve_service · diagnostic_query\nretrieve_runbook"]
-        REM["Remediation Tools\nscale_up · restart_service\nrollback · graceful_drain\nsilence_alerts"]
-    end
+  %% ---------- 3. EXECUTION BRANCH ----------
+  subgraph TOOLS["MCP Tool Layer"]
+    DIAG["Diagnostic Tools\nlog_inspection · get_metric\nobserve_service · diagnostic_query\nretrieve_runbook"]
+    REM["Remediation Tools\nscale_up · restart_service\nrollback · graceful_drain\nsilence_alerts"]
+  end
 
-    subgraph ENV["Environment Orchestration"]
-        FSM["FSM Controller\n(server/fsm.py)\nIDLE→INVESTIGATING→MITIGATING\n→VERIFYING→RESOLVED/ESCALATED"]
-        PIPE["Pipeline\n(server/pipeline.py)"]
-        SAPP["Server App\n(server/app.py · port 8000)\nFastAPI endpoints"]
-    end
+  subgraph INFRA["Simulated Infrastructure (MockMesh)"]
+    MESH["Service Mesh\n(mock_infra/mesh.py)\nauth · api-gateway\nuser-service · payment-service"]
+    TEL["Telemetry Engine\n(mock_infra/telemetry.py)\nParametric decay + Gaussian noise"]
+    MDBK["Mock DB\n(mock_infra/mock_db.py)\nIn-memory query simulation"]
+  end
 
-    subgraph MEM["Memory & Learning"]
-        DB["PostgreSQL + pgvector\n(memory/models.py · db.py)\nepisodes · decisions · causal_edges"]
-        WRITE["Trace Writer\n(memory/write.py)"]
-        RETR["Retrieval Engine\n(memory/retrieve.py)\nCosine similarity lookup"]
-        CONS["Consolidation Job\n(memory/consolidate.py)\nOffline batch · 60-min interval"]
-        CRED["Credit Assignment\n(memory/credit_assignment.py)\nCausal trajectory scoring"]
-        RAG["Runbook RAG\n(rag/runbook_rag.py)\nVector index lookup"]
-    end
+  %% ---------- 4. ORCHESTRATION BRANCH ----------
+  subgraph ENV["Environment Orchestration"]
+    FSM["FSM Controller\n(server/fsm.py)\nIDLE→INVESTIGATING→MITIGATING\n→VERIFYING→RESOLVED/ESCALATED"]
+    PIPE["Pipeline\n(server/pipeline.py)"]
+    SAPP["Server App\n(server/app.py · port 8000)\nFastAPI endpoints"]
+  end
 
-    subgraph PROV["LLM Provider Pool (config.py)"]
-        P1["ZenMux\nTier 1"]
-        P2["Z.ai Direct\nTier 2"]
-        P3["Zhipu Direct\nTier 3 (Verified Working)"]
-        P4["OpenRouter\nTier 4"]
-        P5["HuggingFace\nTier 5"]
-    end
+  %% ---------- 5. MEMORY BRANCH ----------
+  subgraph MEM["Memory & Learning"]
+    DB["PostgreSQL + pgvector\n(memory/models.py · db.py)\nepisodes · decisions · causal_edges"]
+    WRITE["Trace Writer\n(memory/write.py)"]
+    RETR["Retrieval Engine\n(memory/retrieve.py)\nCosine similarity lookup"]
+    CONS["Consolidation Job\n(memory/consolidate.py)\nOffline batch · 60-min interval"]
+    CRED["Credit Assignment\n(memory/credit_assignment.py)\nCausal trajectory scoring"]
+    RAG["Runbook RAG\n(rag/runbook_rag.py)\nVector index lookup"]
+  end
 
-    subgraph KB["Knowledge Base"]
-        RB["Runbooks\n(knowledge_base/)"]
-    end
+  subgraph KB["Knowledge Base"]
+    RB["Runbooks\n(knowledge_base/)"]
+  end
 
-    GR --> RL
-    CLI --> RL
-    ADV --> RL
-    ADV --> GRADE
+  %% ---------- 6. PROVIDER BRANCH ----------
+  subgraph PROV["LLM Provider Pool (config.py)"]
+    P1["ZenMux\nTier 1"]
+    P2["Z.ai Direct\nTier 2"]
+    P3["Zhipu Direct\nTier 3 (Verified Working)"]
+    P4["OpenRouter\nTier 4"]
+    P5["HuggingFace\nTier 5"]
+  end
 
-    RL --> QA
-    QA --> TOOLS
-    TOOLS --> DIAG
-    TOOLS --> REM
-    DIAG --> MESH
-    REM --> MESH
-    MESH --> TEL
-    MESH --> MDBK
+  %% ============================================================
+  %% EDGES — grouped by branch, same relationships as original
+  %% ============================================================
 
-    RL --> FSM
-    FSM --> PIPE
-    PIPE --> SAPP
+  %% Entry -> Agent Core
+  GR --> RL
+  CLI --> RL
+  ADV --> RL
+  ADV --> GRADE
 
-    RL --> MEM
-    WRITE --> DB
-    RETR --> DB
-    CONS --> DB
-    CRED --> CONS
-    RAG --> RB
-    RETR --> RAG
+  %% Agent Core -> Safety Gate -> Execution -> Infra
+  RL --> QA
+  QA --> TOOLS
+  TOOLS --> DIAG
+  TOOLS --> REM
+  DIAG --> MESH
+  REM --> MESH
+  MESH --> TEL
+  MESH --> MDBK
 
-    RL --> PROV
-    GRADE --> FSM
+  %% Agent Core -> Orchestration
+  RL --> FSM
+  FSM --> PIPE
+  PIPE --> SAPP
+  GRADE --> FSM
+
+  %% Agent Core -> Memory -> Knowledge Base
+  RL --> MEM
+  WRITE --> DB
+  RETR --> DB
+  CONS --> DB
+  CRED --> CONS
+  RAG --> RB
+  RETR --> RAG
+
+  %% Agent Core -> Provider Pool
+  RL --> PROV
+
+  %% ============================================================
+  %% STYLING — entry points vs terminal (end-of-flow) nodes
+  %% ============================================================
+  classDef entry fill:#e1f5ee,stroke:#0f6e56,color:#04342c,stroke-width:2px;
+  classDef gate fill:#fbeaf0,stroke:#993556,color:#4b1528,stroke-width:2px;
+  classDef terminal fill:#faece7,stroke:#993c1d,color:#4a1b0c,stroke-width:2px;
+
+  class GR,CLI,ADV entry
+  class QA gate
+  class TEL,MDBK,SAPP,DB,RB,P1,P2,P3,P4,P5 terminal
 ```
 
 ---
