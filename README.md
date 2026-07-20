@@ -1,14 +1,24 @@
 ---
-title: Agentic SRE Benchmark Suite
-sdk: gradio
-sdk_version: 5.12.0
-app_file: app.py
+title: Agentic SRE Adversarial Benchmark Suite
+sdk: docker
+app_port: 7860
 pinned: false
 ---
 
 # Advanced Agentic SRE & Adversarial Stress-Testing Framework
 
-An autonomous Site Reliability Engineering (SRE) diagnosis and remediation system powered by structured Large Language Model reasoning loops. The framework pairs live diagnostic function calling with immediate safety gates, sustained temporal metric verification, causal telemetry tracking, and an extensive adversarial evaluation suite designed to audit both AI agent behavior and reward formula robustness.
+> [!IMPORTANT]
+> **Research Prototype Notice**: This Hugging Face Space hosts a public research prototype and benchmark harness designed to stress-test autonomous Site Reliability Engineering (`SRE`) diagnostic agents. It operates in an isolated, in-memory environment (`MockMesh`) to demonstrate open behavioral problems in AI agent alignment, calibration, and safety verification. It is **not** a production monitoring or auto-remediation tool.
+
+## What This Demo Measures & Why Research Prototypes Need Behavioral Audits
+When evaluating autonomous remediation agents, raw `PASS / FAIL` flags or superficial reward scores (`R_t`) are frequently misleading. An agent that resolves an alert by executing destructive restarts without verifying upstream dependencies might "succeed" on a simple benchmark while causing catastrophic cascading outages in production.
+
+This evaluation suite grades **behavioral verification depth, diagnostic calibration, and specification robustness across 5 open-problem scenarios**:
+1. **Test 1 (`Distribution Shift & Hidden Dependencies`)**: Audits whether the agent actively verifies current diagnostic evidence before taking action (`Quarantine Gate verification vs blind historical precedent`).
+2. **Test 2 (`Near-Miss Diagnostic Calibration`)**: Probes whether diagnostic accuracy scales proportionally with `log_inspection` depth (`accuracy with inspection vs blind guessing`).
+3. **Test 3 (`Delayed Non-Local Consequences - Architecture Gap`)**: Documents a fundamental safety gap where immediate safety gates (`Quarantine`) approve actions whose catastrophic traffic consequences manifest steps later (`causal_edges graph tracking`).
+4. **Test 4 (`Value Conflicts & Trade-offs`)**: Evaluates agent behavior under conflicting objectives (`strict SLA speed recovery vs quarantine safety constraints against data loss`).
+5. **Test 5 (`Reward Hacking & Specification Gaming`)**: Probes reward formula (`R_t`) robustness against specification gaming where symptomatic scaling masks upstream root causes.
 
 ---
 

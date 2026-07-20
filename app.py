@@ -1,15 +1,26 @@
 """
 app.py — Hugging Face Spaces Gradio SDK Entrypoint.
 
-Provides a web interface to run the Agentic SRE 5-test adversarial evaluation suite
-and interactive diagnostic episodes without requiring a paid Docker space or local CLI.
+Provides a clean, public-facing web interface around the Agentic SRE 5-test adversarial
+evaluation suite (`adversarial/test_1_distribution_shift` through `test_5_reward_hacking`).
+
+Key features:
+- BYOK (Bring Your Own Key) primary mode supporting 5 provider tiers.
+- Capped session-scoped free trial (2 runs/session) powered by Zhipu GLM-5.2.
+- Global daily server-side safety threshold (100 total fallback runs/day).
+- Strict per-visitor isolation (fresh `MockMesh` context per browser session, `use_db=False` in-memory mode).
 """
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime, timezone
 import json
-from typing import Any, Dict, List
+import logging
+from typing import Any, Dict, List, Optional, Tuple
 
+import gradio as gr
+
+# Prevent HF Hub token writes on read-only Space containers
 import huggingface_hub
 if not hasattr(huggingface_hub, "HfFolder"):
     class _MonkeyPatchHfFolder:
@@ -27,27 +38,44 @@ if not hasattr(huggingface_hub, "HfFolder"):
             return ""
     huggingface_hub.HfFolder = _MonkeyPatchHfFolder
 
-import gradio as gr
-
 from adversarial.runner import run_all
+from agents.reasoning_loop import provider_pool
+from config import settings
 from inference import eval_task
 
-try:
-    import spaces
-except ImportError:
-    class _DummySpaces:
-        @staticmethod
-        def GPU(*args, **kwargs):
-            def decorator(fn):
-                return fn
-            if len(args) == 1 and callable(args[0]):
-                return args[0]
-            return decorator
-    spaces = _DummySpaces()
+# ── Global Server-Side Daily Rate Limiter ─────────────────────────────────────
+_GLOBAL_DAILY_STATE = {
+    "date": datetime.now(timezone.utc).date(),
+    "count": 0,
+    "max_daily": 100,
+}
+_EXECUTION_LOCK = asyncio.Lock()
+
+PROVIDER_CONFIGS = {
+    "Zhipu Direct (Tier 3)": {"base_url": "https://open.bigmodel.cn/api/paas/v4/", "model_name": "glm-5.2"},
+    "HuggingFace Router (Tier 0)": {"base_url": "https://router.huggingface.co/v1", "model_name": "zai-org/GLM-5.2"},
+    "ZenMux (Tier 1)": {"base_url": "https://zenmux.ai/api/v1", "model_name": "z-ai/glm-5.2"},
+    "Z.ai Direct (Tier 2)": {"base_url": "https://api.z.ai/v1", "model_name": "glm-5.2"},
+    "OpenRouter (Tier 4)": {"base_url": "https://openrouter.ai/api/v1", "model_name": "z-ai/glm-5.2"},
+}
+
+
+def _check_and_update_daily_limit() -> Tuple[bool, str]:
+    """Check and increment the server-side daily fallback counter. Resets at midnight UTC."""
+    today = datetime.now(timezone.utc).date()
+    if _GLOBAL_DAILY_STATE["date"] != today:
+        _GLOBAL_DAILY_STATE["date"] = today
+        _GLOBAL_DAILY_STATE["count"] = 0
+
+    if _GLOBAL_DAILY_STATE["count"] >= _GLOBAL_DAILY_STATE["max_daily"]:
+        return False, f"Server daily free fallback limit reached ({_GLOBAL_DAILY_STATE['max_daily']} runs used across all visitors today). Please paste your own API Key (BYOK) above to continue testing."
+
+    _GLOBAL_DAILY_STATE["count"] += 1
+    return True, ""
 
 
 def format_grade_results(results: List[Any]) -> str:
-    """Format GradeResult objects into a markdown scorecard report."""
+    """Format GradeResult objects into a structured scorecard report mirroring runner.py format."""
     md = ["# Adversarial Stress-Test Scorecard\n"]
     md.append("| Test ID | Verdict | Score | Classification | Expected vs Observed |")
     md.append("| :--- | :--- | :--- | :--- | :--- |")
@@ -57,9 +85,9 @@ def format_grade_results(results: List[Any]) -> str:
         exp = str(r.expected_behavior).replace("\n", " ")
         md.append(f"| `{r.test_id}` | **{r.verdict}** | `{r.score:.2f} / 1.00` | `{r.classification}` | **Expected:** {exp} <br/> **Observed:** {obs} |")
 
-    md.append("\n## Detailed Findings\n")
+    md.append("\n## Detailed Findings & Behavioral Diagnostics\n")
     for r in results:
-        md.append(f"### {r.test_id} ({r.verdict} - {r.score:.2f})")
+        md.append(f"### `{r.test_id}` — Verdict: `{r.verdict}` (Score: `{r.score:.2f}/1.00`)")
         for finding in r.findings:
             md.append(f"- {finding}")
         md.append("")
@@ -67,132 +95,228 @@ def format_grade_results(results: List[Any]) -> str:
     return "\n".join(md)
 
 
-@spaces.GPU
-def zerogpu_warmup() -> str:
-    """Warmup helper for ZeroGPU detection."""
-    return "ZeroGPU Ready"
+async def _execute_tests_with_provider(
+    test_ids: List[int],
+    n_runs: int,
+    provider_name: str,
+    api_key: str,
+) -> List[Any]:
+    """Execute adversarial suite under a temporary provider configuration with strict session isolation."""
+    async with _EXECUTION_LOCK:
+        orig_providers = list(provider_pool.providers)
+        orig_idx = provider_pool.current_idx
+        orig_cooldowns = dict(provider_pool.provider_cooldowns)
+        orig_settings_key = settings.model_api_key
+        orig_settings_url = settings.model_base_url
+        orig_settings_model = settings.model_name
+
+        try:
+            cfg = PROVIDER_CONFIGS.get(provider_name, PROVIDER_CONFIGS["Zhipu Direct (Tier 3)"])
+            active_key = api_key.strip()
+
+            # Temporarily configure the pool and global settings for this specific evaluation
+            provider_pool.providers = [{
+                "name": f"Session Mode ({provider_name})",
+                "base_url": cfg["base_url"],
+                "api_key": active_key,
+                "model_name": cfg["model_name"],
+            }]
+            provider_pool.current_idx = 0
+            provider_pool.provider_cooldowns.clear()
+
+            settings.model_api_key = active_key
+            settings.model_base_url = cfg["base_url"]
+            settings.model_name = cfg["model_name"]
+
+            # Run in in-memory mode (use_db=False) to ensure zero risk to dev databases
+            return await run_all(test_ids=test_ids, n_runs=n_runs, use_db=False)
+        finally:
+            # Restore global state cleanly after run completes
+            provider_pool.providers = orig_providers
+            provider_pool.current_idx = orig_idx
+            provider_pool.provider_cooldowns = orig_cooldowns
+            settings.model_api_key = orig_settings_key
+            settings.model_base_url = orig_settings_url
+            settings.model_name = orig_settings_model
 
 
-@spaces.GPU(duration=120)
-def run_benchmark_ui(test_choices: List[str], use_db: bool) -> tuple[str, str]:
-    """Handler for the Adversarial Benchmark tab."""
+def run_benchmark_ui(
+    test_choices: List[str],
+    provider_choice: str,
+    byok_key: str,
+    n_runs_slider: int,
+    session_state: Dict[str, Any],
+) -> Tuple[str, str, Dict[str, Any], str]:
+    """Gradio handler for executing the 5-test adversarial evaluation suite."""
     if not test_choices:
-        return "Please select at least one test to run.", "{}"
+        return "Please select at least one test scenario to run.", "{}", session_state, _get_counter_msg(session_state)
 
-    # Map choice names to integer IDs
     mapping = {
         "Test 1: Distribution Shift & Hidden Dependencies": 1,
-        "Test 2: Diagnostic Calibration": 2,
+        "Test 2: Near-Miss Diagnostic Calibration": 2,
         "Test 3: Delayed Non-Local Consequences (Architecture Gap)": 3,
         "Test 4: Value Conflicts & Trade-offs": 4,
         "Test 5: Reward Hacking & Specification Gaming": 5,
     }
     test_ids = [mapping[c] for c in test_choices if c in mapping]
 
+    # Check whether visitor provided a BYOK key or needs free trial fallback
+    cleaned_key = (byok_key or "").strip()
+    is_byok = len(cleaned_key) > 0
+
+    if is_byok:
+        active_provider = provider_choice
+        active_key = cleaned_key
+    else:
+        # Free trial fallback checks
+        remaining = session_state.get("remaining", 2)
+        if remaining <= 0:
+            err_msg = "### Session Free Trial Limit Reached (2/2 runs used)\n\nYou have used your session allocation. Please paste your own API Key (`BYOK`) in the input box above to continue running evaluations at your own quota."
+            return err_msg, json.dumps({"error": "session_limit_reached"}, indent=2), session_state, _get_counter_msg(session_state)
+
+        ok, daily_err = _check_and_update_daily_limit()
+        if not ok:
+            return f"### {daily_err}", json.dumps({"error": "daily_limit_reached"}, indent=2), session_state, _get_counter_msg(session_state)
+
+        # Decrement visitor's session counter
+        session_state["remaining"] = remaining - 1
+        active_provider = "Zhipu Direct (Tier 3)"
+        active_key = (settings.zhipu_api_key or settings.model_api_key or "").strip()
+        if not active_key:
+            err_msg = "### Server Free Trial Fallback Key Unconfigured\n\nNo fallback API key (`ZHIPU_API_KEY`) is configured on this Space. Please paste your own API Key (`BYOK`) above to execute."
+            return err_msg, json.dumps({"error": "missing_fallback_key"}, indent=2), session_state, _get_counter_msg(session_state)
+
     try:
-        results = asyncio.run(run_all(test_ids=test_ids, n_runs=1, use_db=use_db))
+        results = asyncio.run(_execute_tests_with_provider(
+            test_ids=test_ids,
+            n_runs=n_runs_slider,
+            provider_name=active_provider,
+            api_key=active_key,
+        ))
         markdown_report = format_grade_results(results)
         raw_json = json.dumps([r.model_dump() if hasattr(r, "model_dump") else (r.to_dict() if hasattr(r, "to_dict") else r.__dict__) for r in results], indent=2)
-        return markdown_report, raw_json
+        return markdown_report, raw_json, session_state, _get_counter_msg(session_state)
     except Exception as e:
-        return f"Error executing benchmark suite: {str(e)}", json.dumps({"error": str(e)}, indent=2)
+        err_msg = f"### Evaluation Execution Error\n\nAn exception occurred while executing the benchmark suite:\n```\n{str(e)}\n```"
+        return err_msg, json.dumps({"error": str(e)}, indent=2), session_state, _get_counter_msg(session_state)
 
 
-@spaces.GPU(duration=120)
-def run_episode_ui(task_id: str) -> tuple[str, str]:
-    """Handler for running a standalone diagnostic task episode."""
-    try:
-        stats = asyncio.run(eval_task(task_id=task_id, n_episodes=1))
-        md = [f"# Episode Results for `{task_id}`\n"]
-        md.append(f"- **Mean Reward (R_t)**: `{stats.get('mean_reward', 0.0):.4f}`")
-        md.append(f"- **Outcome Distribution**: `{json.dumps(stats.get('outcome_counts', {}))}`")
-        md.append(f"- **Mean Steps Taken**: `{stats.get('mean_steps', 0.0):.1f}`")
-        md.append(f"- **Total Time Elapsed**: `{stats.get('elapsed_seconds', 0.0):.2f}s`")
-        
-        return "\n".join(md), json.dumps(stats, indent=2)
-    except Exception as e:
-        return f"Error executing episode: {str(e)}", json.dumps({"error": str(e)}, indent=2)
+def _get_counter_msg(session_state: Dict[str, Any]) -> str:
+    rem = session_state.get("remaining", 2)
+    if rem <= 0:
+        return "⚠️ **0 free runs remaining this session**. Please enter your own API Key (BYOK) above to continue testing."
+    return f"⚡ **{rem} free run{'s' if rem != 1 else ''} remaining this session** (powered by Zhipu GLM-5.2 fallback). Enter your API Key above for unlimited runs."
 
 
-with gr.Blocks(title="Agentic SRE Benchmark Suite") as demo:
-    gr.Markdown(
-        """
-        # Advanced Agentic SRE & Adversarial Stress-Testing Framework
-        
-        An autonomous Site Reliability Engineering (SRE) diagnosis and remediation framework powered by structured Large Language Model reasoning loops (`Reason -> Act -> Observe -> Revise`). Pairs live diagnostic tool calling with immediate Quarantine safety gates, sustained multi-snapshot temporal verification, and a 5-test adversarial evaluation suite.
-        """
-    )
+# ── Gradio UI Construction ───────────────────────────────────────────────────
+
+FRAMING_TEXT = """
+# Advanced Agentic SRE: 5-Test Adversarial Stress-Testing Framework
+
+This public evaluation harness exposes our 5-test adversarial benchmark suite designed to probe autonomous Site Reliability Engineering (`SRE`) agents across distribution shifts, calibration limits, architecture gaps, and reward hacking vectors.
+
+### Why Research Prototypes Require Behavioral Calibration Metrics
+When evaluating autonomous remediation agents, raw `PASS / FAIL` flags or superficial reward scores (`R_t`) are frequently misleading. An agent that resolves an alert by executing destructive restarts without verifying upstream dependencies might "succeed" on a simple benchmark while causing catastrophic cascading outages in production.
+
+This evaluation suite grades **behavioral verification depth, diagnostic calibration, and specification robustness**:
+- **Test 1 (`Distribution Shift`)**: Measures whether the agent verifies current diagnostic evidence or blindly applies stale historical precedents (`Quarantine Gate verification`).
+- **Test 2 (`Near-Miss Calibration`)**: Probes whether diagnostic accuracy scales with `log_inspection` depth (`accuracy with inspection vs blind guessing`).
+- **Test 3 (`Delayed Consequence`)**: Documents a fundamental `Architecture Gap` where immediate safety gates (`Quarantine`) pass actions whose catastrophic traffic consequences manifest steps later (`causal_edges tracking`).
+- **Test 4 (`Value Conflict`)**: Evaluates agent behavior under conflicting objectives (`strict SLA speed vs quarantine safety constraints`).
+- **Test 5 (`Reward Hacking`)**: Tests reward formula (`R_t`) robustness against specification gaming, where symptomatic scaling masks upstream root causes.
+"""
+
+with gr.Blocks(title="Agentic SRE Adversarial Benchmark Suite") as demo:
+    gr.Markdown(FRAMING_TEXT)
+
+    session_state = gr.State(value={"remaining": 2})
 
     with gr.Tab("Adversarial Benchmark Suite"):
-        gr.Markdown("Select and execute the adversarial stress-test evaluations to benchmark agent diagnostic calibration, safety gates, and reward formula ($R_t$) robustness.")
+        gr.Markdown("Select test scenarios and provide an API key (or use your session free trial allocation) to execute an isolated adversarial evaluation.")
+
         with gr.Row():
             with gr.Column(scale=1):
+                gr.Markdown("### 1. Configure Provider & BYOK")
+                provider_dropdown = gr.Dropdown(
+                    choices=list(PROVIDER_CONFIGS.keys()),
+                    value="Zhipu Direct (Tier 3)",
+                    label="Model Provider Tier",
+                )
+                byok_input = gr.Textbox(
+                    label="Your API Key (BYOK - Optional)",
+                    placeholder="Paste API key here... (If blank, uses free session trial)",
+                    type="password",
+                )
+                free_trial_counter = gr.Markdown(_get_counter_msg({"remaining": 2}))
+
+                gr.Markdown("### 2. Select Test Scenarios")
                 test_selector = gr.CheckboxGroup(
                     choices=[
                         "Test 1: Distribution Shift & Hidden Dependencies",
-                        "Test 2: Diagnostic Calibration",
+                        "Test 2: Near-Miss Diagnostic Calibration",
                         "Test 3: Delayed Non-Local Consequences (Architecture Gap)",
                         "Test 4: Value Conflicts & Trade-offs",
                         "Test 5: Reward Hacking & Specification Gaming",
                     ],
                     value=[
                         "Test 1: Distribution Shift & Hidden Dependencies",
-                        "Test 2: Diagnostic Calibration",
+                        "Test 2: Near-Miss Diagnostic Calibration",
                         "Test 3: Delayed Non-Local Consequences (Architecture Gap)",
                         "Test 4: Value Conflicts & Trade-offs",
                         "Test 5: Reward Hacking & Specification Gaming",
                     ],
-                    label="Select Adversarial Tests",
+                    label="Evaluation Scenarios",
                 )
-                db_checkbox = gr.Checkbox(
-                    value=False,
-                    label="Enable PostgreSQL DB Connection (requires database attached to Space; keep unchecked for offline mock mode)",
+                n_runs_slider = gr.Slider(
+                    minimum=1,
+                    maximum=3,
+                    value=1,
+                    step=1,
+                    label="Runs per Subtype (Test 2 Calibration Depth)",
                 )
-                run_btn = gr.Button("Execute Benchmark Suite", variant="primary")
-            
+                run_btn = gr.Button("🚀 Execute Benchmark Suite", variant="primary")
+
             with gr.Column(scale=2):
-                report_output = gr.Markdown(label="Scorecard Report")
-                json_output = gr.Code(label="Raw JSON Results", language="json")
+                report_output = gr.Markdown(label="Scorecard Report", value="*Select scenarios and click Execute Benchmark Suite to run evaluation...*")
+                with gr.Accordion("Raw JSON Evaluation Results", open=False):
+                    json_output = gr.Code(label="JSON Result Dump", language="json")
 
         run_btn.click(
             fn=run_benchmark_ui,
-            inputs=[test_selector, db_checkbox],
-            outputs=[report_output, json_output],
+            inputs=[test_selector, provider_dropdown, byok_input, n_runs_slider, session_state],
+            outputs=[report_output, json_output, session_state, free_trial_counter],
         )
 
-    with gr.Tab("Run Diagnostic Episode"):
-        gr.Markdown("Run an interactive diagnostic and remediation episode (`inference.py`) across simulated microservices (`auth`, `payment-service`, `api-gateway`).")
+    with gr.Tab("Standalone Diagnostic Episode"):
+        gr.Markdown("Run a single diagnostic and remediation episode (`inference.py`) across simulated microservices (`auth`, `api-gateway`, `user-service`, `payment-service`).")
         with gr.Row():
             with gr.Column(scale=1):
                 task_selector = gr.Dropdown(
                     choices=["task_1", "task_2", "task_3", "task_4"],
                     value="task_1",
-                    label="Select Infrastructure Fault Scenario",
+                    label="Select Fault Scenario",
                 )
-                ep_btn = gr.Button("Run Diagnostic Episode", variant="primary")
-            
+                ep_btn = gr.Button("⚡ Run Single Episode", variant="primary")
+
             with gr.Column(scale=2):
-                ep_report = gr.Markdown(label="Episode Statistics")
-                ep_json = gr.Code(label="Raw JSON Stats", language="json")
+                ep_report = gr.Markdown(label="Episode Score summary")
+                with gr.Accordion("Raw JSON Statistics", open=False):
+                    ep_json = gr.Code(label="Stats Dump", language="json")
 
-        ep_btn.click(
-            fn=run_episode_ui,
-            inputs=[task_selector],
-            outputs=[ep_report, ep_json],
-        )
+        def _run_single_ep(task_id: str) -> Tuple[str, str]:
+            try:
+                stats = asyncio.run(eval_task(task_id=task_id, n_episodes=1))
+                md = [f"# Episode Outcome for `{task_id}`\n"]
+                md.append(f"- **Mean Reward ($R_t$)**: `{stats.get('mean_reward', 0.0):.4f}`")
+                md.append(f"- **Outcome Distribution**: `{json.dumps(stats.get('outcome_counts', {}))}`")
+                md.append(f"- **Mean Steps Taken**: `{stats.get('mean_steps', 0.0):.1f}`")
+                md.append(f"- **Total Time Elapsed**: `{stats.get('elapsed_seconds', 0.0):.2f}s`")
+                return "\n".join(md), json.dumps(stats, indent=2)
+            except Exception as e:
+                return f"### Error executing episode:\n```\n{str(e)}\n```", json.dumps({"error": str(e)}, indent=2)
 
-    with gr.Tab("Framework Architecture"):
-        gr.Markdown(
-            """
-            ### Core Components
-            1. **Autonomous Reasoning Loop (`agents/reasoning_loop.py`)**: Structured function calling (`log_inspection`, `get_metric`, `scale_up`, `restart_service`, `rollback`, `graceful_drain`). Requires diagnostic evidence verification before executing high-risk remediations.
-            2. **Immediate Safety Gate (`quarantine.py`)**: State machine intercepting destructive or unverified commands (`quarantine_block`).
-            3. **Sustained Metric Verification (`server/pipeline.py` & `graders/reward.py`)**: Evaluates SLA attainment across multiple temporal snapshots (`window_probes`) to prevent specification gaming where temporary relief masks underlying root causes.
-            """
-        )
+        ep_btn.click(fn=_run_single_ep, inputs=[task_selector], outputs=[ep_report, ep_json])
+
 
 if __name__ == "__main__":
-    try:
-        demo.launch(ssr=False)
-    except TypeError:
-        demo.launch()
+    demo.launch(server_name="0.0.0.0", server_port=7860)
