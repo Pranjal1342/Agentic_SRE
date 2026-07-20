@@ -56,7 +56,7 @@ from adversarial import _episode_runner
 import uuid
 import yaml
 from mock_infra.mesh import MockMesh
-from mock_infra.mesh_adversarial import inject_hidden_dependency_fault
+from mock_infra.mesh_adversarial import patch_mesh_for_adversarial
 from agents.reasoning_loop import provider_pool
 from config import settings
 from inference import eval_task
@@ -300,8 +300,9 @@ def run_custom_test_ui(
         settings.model_name = cfg["model_name"]
 
         mesh = MockMesh(use_db=False)
+        patch_mesh_for_adversarial(mesh)
         if trap:
-            inject_hidden_dependency_fault(mesh, serv)
+            mesh.inject_hidden_dependency_fault(serv)
 
         async def run_custom():
             ep_id = f"custom-byo-{uuid.uuid4().hex[:6]}"
