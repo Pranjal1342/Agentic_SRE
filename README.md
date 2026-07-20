@@ -198,9 +198,9 @@ python -m adversarial.security_audit
 
 ---
 
-## Public Stress-Test Demo Summary (`SPACE_README.md`)
+## Public Stress-Test Demo Summary
 
-The repository includes a Gradio web application (`app.py` deployed via Gradio SDK on port `7860`) suitable for public stress-testing on Hugging Face Spaces. For exact public demo documentation, see `SPACE_README.md`.
+The repository includes a Gradio web application (`app.py` deployed via Gradio SDK on port `7860`) suitable for public stress-testing on Hugging Face Spaces. When deployed, Hugging Face automatically renders this document and configures the container using the YAML frontmatter above.
 
 ### Key Features of the Public Demo
 - **Bring Your Own Key (`BYOK`) Routing**: Visitors can select from the five supported provider endpoints (`config.py`) and enter their own API key (`type="password"`). When a BYOK key is provided, all session counters are bypassed.
