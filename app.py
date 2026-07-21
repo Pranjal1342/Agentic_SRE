@@ -13,6 +13,7 @@ Key features:
 from __future__ import annotations
 
 import os
+import contextlib
 import asyncio
 from datetime import datetime, timezone
 import json
@@ -100,6 +101,41 @@ def format_grade_results(results: List[Any]) -> str:
     return "\n".join(md)
 
 
+@contextlib.contextmanager
+def _temporary_provider_override(provider_name: str, api_key: str):
+    with _THREAD_LOCK:
+        orig_providers = list(provider_pool.providers)
+        orig_idx = provider_pool.current_idx
+        orig_cooldowns = dict(provider_pool.provider_cooldowns)
+        orig_settings_key = settings.model_api_key
+        orig_settings_url = settings.model_base_url
+        orig_settings_model = settings.model_name
+        try:
+            cfg = PROVIDER_CONFIGS.get(provider_name, PROVIDER_CONFIGS["Zhipu Direct (Tier 3)"])
+            active_key = api_key.strip()
+
+            provider_pool.providers = [{
+                "name": f"Session Mode ({provider_name})",
+                "base_url": cfg["base_url"],
+                "api_key": active_key,
+                "model_name": cfg["model_name"],
+            }]
+            provider_pool.current_idx = 0
+            provider_pool.provider_cooldowns.clear()
+
+            settings.model_api_key = active_key
+            settings.model_base_url = cfg["base_url"]
+            settings.model_name = cfg["model_name"]
+            yield
+        finally:
+            provider_pool.providers = orig_providers
+            provider_pool.current_idx = orig_idx
+            provider_pool.provider_cooldowns = orig_cooldowns
+            settings.model_api_key = orig_settings_key
+            settings.model_base_url = orig_settings_url
+            settings.model_name = orig_settings_model
+
+
 async def _execute_tests_with_provider(
     test_ids: List[int],
     n_runs: int,
@@ -107,40 +143,9 @@ async def _execute_tests_with_provider(
     api_key: str,
 ) -> List[Any]:
     """Execute adversarial suite under a temporary provider configuration with strict session isolation."""
-    with _THREAD_LOCK:
-        async with _EXECUTION_LOCK:
-            orig_providers = list(provider_pool.providers)
-            orig_idx = provider_pool.current_idx
-            orig_cooldowns = dict(provider_pool.provider_cooldowns)
-            orig_settings_key = settings.model_api_key
-            orig_settings_url = settings.model_base_url
-            orig_settings_model = settings.model_name
-
-            try:
-                cfg = PROVIDER_CONFIGS.get(provider_name, PROVIDER_CONFIGS["Zhipu Direct (Tier 3)"])
-                active_key = api_key.strip()
-
-                provider_pool.providers = [{
-                    "name": f"Session Mode ({provider_name})",
-                    "base_url": cfg["base_url"],
-                    "api_key": active_key,
-                    "model_name": cfg["model_name"],
-                }]
-                provider_pool.current_idx = 0
-                provider_pool.provider_cooldowns.clear()
-
-                settings.model_api_key = active_key
-                settings.model_base_url = cfg["base_url"]
-                settings.model_name = cfg["model_name"]
-
-                return await run_all(test_ids=test_ids, n_runs=n_runs, use_db=False)
-            finally:
-                provider_pool.providers = orig_providers
-                provider_pool.current_idx = orig_idx
-                provider_pool.provider_cooldowns = orig_cooldowns
-                settings.model_api_key = orig_settings_key
-                settings.model_base_url = orig_settings_url
-                settings.model_name = orig_settings_model
+    async with _EXECUTION_LOCK:
+        with _temporary_provider_override(provider_name, api_key):
+            return await run_all(test_ids=test_ids, n_runs=n_runs, use_db=False)
 
 
 def run_benchmark_ui(
@@ -364,43 +369,22 @@ def run_custom_test_ui(
         if not active_key:
             return "### Server Free Trial Fallback Key Unconfigured", "{}", session_state, _get_counter_msg(session_state)
 
-    with _THREAD_LOCK:
-        orig_providers = list(provider_pool.providers)
-        orig_idx = provider_pool.current_idx
-        orig_cooldowns = dict(provider_pool.provider_cooldowns)
-        orig_settings_key = settings.model_api_key
-        orig_settings_url = settings.model_base_url
-        orig_settings_model = settings.model_name
+    with _temporary_provider_override(active_provider, active_key):
+        mesh = MockMesh(use_db=False)
+        patch_mesh_for_adversarial(mesh)
+        if trap:
+            mesh.inject_hidden_dependency_fault(serv)
 
-        try:
-            cfg = PROVIDER_CONFIGS.get(active_provider, PROVIDER_CONFIGS["Zhipu Direct (Tier 3)"])
-            provider_pool.providers = [{
-                "name": f"Session Mode ({active_provider})",
-                "base_url": cfg["base_url"],
-                "api_key": active_key,
-                "model_name": cfg["model_name"],
-            }]
-            provider_pool.current_idx = 0
-            provider_pool.provider_cooldowns = {}
-            settings.model_api_key = active_key
-            settings.model_base_url = cfg["base_url"]
-            settings.model_name = cfg["model_name"]
+        async def run_custom():
+            ep_id = f"custom-byo-{uuid.uuid4().hex[:6]}"
+            return await _episode_runner.run_episode_collect_trace(
+                mesh=mesh,
+                episode_id=ep_id,
+                task_id="byo_custom_test",
+                fault_description=fault_desc,
+            )
 
-            mesh = MockMesh(use_db=False)
-            patch_mesh_for_adversarial(mesh)
-            if trap:
-                mesh.inject_hidden_dependency_fault(serv)
-
-            async def run_custom():
-                ep_id = f"custom-byo-{uuid.uuid4().hex[:6]}"
-                return await _episode_runner.run_episode_collect_trace(
-                    mesh=mesh,
-                    episode_id=ep_id,
-                    task_id="byo_custom_test",
-                    fault_description=fault_desc,
-                )
-
-            decisions, res_summary, final_reward = asyncio.run(run_custom())
+        decisions, res_summary, final_reward = asyncio.run(run_custom())
 
             has_inspection = any(d.get("action_type") in ("diagnostic_query", "log_inspection", "retrieve_runbook") for d in decisions)
             quarantine_blocks = sum(1 for d in decisions if d.get("quarantine_flag") or d.get("exit_code") == -1)
@@ -653,6 +637,20 @@ with gr.Blocks(title="Agentic SRE Adversarial Benchmark Suite") as demo:
         gr.Markdown("Run a single diagnostic and remediation episode (`inference.py`) across simulated microservices (`auth`, `api-gateway`, `user-service`, `payment-service`).")
         with gr.Row():
             with gr.Column(scale=1):
+                gr.Markdown("### 1. Configure Provider & BYOK")
+                diag_provider = gr.Dropdown(
+                    choices=list(PROVIDER_CONFIGS.keys()),
+                    value="Zhipu Direct (Tier 3)",
+                    label="Model Provider Tier",
+                )
+                diag_byok = gr.Textbox(
+                    label="Your API Key (BYOK - Optional)",
+                    placeholder="Paste API key here... (If blank, uses free session trial)",
+                    type="password",
+                )
+                diag_counter = gr.Markdown(_get_counter_msg({"remaining": 2}))
+
+                gr.Markdown("### 2. Select Scenario")
                 task_selector = gr.Dropdown(
                     choices=["task_1", "task_2", "task_3", "task_4"],
                     value="task_1",
@@ -665,9 +663,36 @@ with gr.Blocks(title="Agentic SRE Adversarial Benchmark Suite") as demo:
                 with gr.Accordion("Raw JSON Statistics", open=False):
                     ep_json = gr.Code(label="Stats Dump", language="json")
 
-        def _run_single_ep(task_id: str) -> Tuple[str, str]:
+        def _run_single_ep(task_id: str, provider_choice: str, byok_key: str, session_state) -> Tuple[str, str, Any, str]:
+            cleaned_key = (byok_key or "").strip()
+            is_byok = len(cleaned_key) > 0
+
+            if is_byok:
+                active_provider = provider_choice
+                active_key = cleaned_key
+            else:
+                remaining = session_state.get("remaining", 2)
+                if remaining <= 0:
+                    err_msg = "### Session Free Trial Limit Reached (2/2 runs used)\n\nYou have used your session allocation. Please paste your own API Key (`BYOK`) in the input box above to continue testing."
+                    return err_msg, json.dumps({"error": "session_limit_reached"}, indent=2), session_state, _get_counter_msg(session_state)
+
+                ok, daily_err = _check_and_update_daily_limit()
+                if not ok:
+                    return f"### {daily_err}", json.dumps({"error": "daily_limit_reached"}, indent=2), session_state, _get_counter_msg(session_state)
+
+                session_state["remaining"] = remaining - 1
+                active_provider = "Zhipu Direct (Tier 3)"
+                active_key = (settings.zhipu_api_key or settings.model_api_key or "").strip()
+                if not active_key:
+                    return "### Server Free Trial Fallback Key Unconfigured", "{}", session_state, _get_counter_msg(session_state)
+
             try:
-                stats = asyncio.run(eval_task(task_id=task_id, n_episodes=1))
+                async def run_diag():
+                    async with _EXECUTION_LOCK:
+                        with _temporary_provider_override(active_provider, active_key):
+                            return await eval_task(task_id=task_id, n_episodes=1)
+
+                stats = asyncio.run(run_diag())
                 rewards_dict = stats.get("rewards", {})
                 steps_dict = stats.get("step_counts", {})
                 md = [f"# Episode Outcome for `{task_id}`\n"]
@@ -675,11 +700,15 @@ with gr.Blocks(title="Agentic SRE Adversarial Benchmark Suite") as demo:
                 md.append(f"- **Outcome Distribution**: `{json.dumps(stats.get('outcomes', {}))}`")
                 md.append(f"- **Mean Steps Taken**: `{steps_dict.get('mean', 0.0):.1f}`")
                 md.append(f"- **Total Time Elapsed**: `{stats.get('elapsed_seconds', 0.0):.2f}s`")
-                return "\n".join(md), json.dumps(stats, indent=2)
+                return "\n".join(md), json.dumps(stats, indent=2), session_state, _get_counter_msg(session_state)
             except Exception as e:
-                return f"### Error executing episode:\n```\n{str(e)}\n```", json.dumps({"error": str(e)}, indent=2)
+                return f"### Error executing episode:\n```\n{str(e)}\n```", json.dumps({"error": str(e)}, indent=2), session_state, _get_counter_msg(session_state)
 
-        ep_btn.click(fn=_run_single_ep, inputs=[task_selector], outputs=[ep_report, ep_json])
+        ep_btn.click(
+            fn=_run_single_ep,
+            inputs=[task_selector, diag_provider, diag_byok, session_state],
+            outputs=[ep_report, ep_json, session_state, diag_counter],
+        )
 
 
 if __name__ == "__main__":
