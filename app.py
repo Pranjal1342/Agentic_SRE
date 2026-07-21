@@ -22,19 +22,6 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import gradio as gr
 
-try:
-    import spaces
-except ImportError:
-    class _DummySpaces:
-        @staticmethod
-        def GPU(*args, **kwargs):
-            def decorator(fn):
-                return fn
-            if len(args) == 1 and callable(args[0]):
-                return args[0]
-            return decorator
-    spaces = _DummySpaces()
-
 from adversarial.runner import run_all
 from adversarial import _episode_runner
 import uuid
@@ -154,12 +141,6 @@ async def _execute_tests_with_provider(
                 settings.model_api_key = orig_settings_key
                 settings.model_base_url = orig_settings_url
                 settings.model_name = orig_settings_model
-
-
-@spaces.GPU
-def _gpu_warmup_and_check() -> str:
-    """Satisfy ZeroGPU startup detection and ensure clean NVIDIA container hook verification."""
-    return "ZeroGPU runtime verified and active."
 
 
 def run_benchmark_ui(
@@ -701,9 +682,5 @@ with gr.Blocks(title="Agentic SRE Adversarial Benchmark Suite") as demo:
         ep_btn.click(fn=_run_single_ep, inputs=[task_selector], outputs=[ep_report, ep_json])
 
 
-        demo.load(fn=_gpu_warmup_and_check, inputs=None, outputs=None)
-
-
 if __name__ == "__main__":
-    _gpu_warmup_and_check()
     demo.launch(server_name="0.0.0.0", server_port=7860)
