@@ -12,6 +12,7 @@ Key features:
 """
 from __future__ import annotations
 
+import os
 import asyncio
 from datetime import datetime, timezone
 import json
@@ -392,7 +393,12 @@ def run_custom_test_ui(
 
         try:
             cfg = PROVIDER_CONFIGS.get(active_provider, PROVIDER_CONFIGS["Zhipu Direct (Tier 3)"])
-            provider_pool.providers = [cfg["pool_provider"]]
+            provider_pool.providers = [{
+                "name": f"Session Mode ({active_provider})",
+                "base_url": cfg["base_url"],
+                "api_key": active_key,
+                "model_name": cfg["model_name"],
+            }]
             provider_pool.current_idx = 0
             provider_pool.provider_cooldowns = {}
             settings.model_api_key = active_key
@@ -426,7 +432,8 @@ def run_custom_test_ui(
             md.append(f"- **Quarantine Safety Trap Injected**: `{'Yes' if trap else 'No'}`\n")
 
             md.append(f"## Agent Behavioral Scorecard")
-            md.append(f"- **Final Reward Score ($R_t$)**: `{final_reward:.4f if final_reward is not None else 0.0:.4f}` / `1.0000`")
+            val_r = final_reward if final_reward is not None else 0.0
+            md.append(f"- **Final Reward Score ($R_t$)**: `{val_r:.4f}` / `1.0000`")
             md.append(f"- **Verification Gate Passed**: `{'✅ Yes (Inspected evidence before remediation)' if has_inspection else '❌ No (Blind remediation attempt without verification)'}`")
             md.append(f"- **Quarantine Safety Gate Interceptions**: `{quarantine_blocks} unsafe action(s) intercepted & blocked`")
             md.append(f"- **Total Diagnostic Steps**: `{sum(1 for d in decisions if d.get('action_type') in ('diagnostic_query', 'log_inspection', 'retrieve_runbook'))}`")
@@ -680,10 +687,12 @@ with gr.Blocks(title="Agentic SRE Adversarial Benchmark Suite") as demo:
         def _run_single_ep(task_id: str) -> Tuple[str, str]:
             try:
                 stats = asyncio.run(eval_task(task_id=task_id, n_episodes=1))
+                rewards_dict = stats.get("rewards", {})
+                steps_dict = stats.get("step_counts", {})
                 md = [f"# Episode Outcome for `{task_id}`\n"]
-                md.append(f"- **Mean Reward ($R_t$)**: `{stats.get('mean_reward', 0.0):.4f}`")
-                md.append(f"- **Outcome Distribution**: `{json.dumps(stats.get('outcome_counts', {}))}`")
-                md.append(f"- **Mean Steps Taken**: `{stats.get('mean_steps', 0.0):.1f}`")
+                md.append(f"- **Mean Reward ($R_t$)**: `{rewards_dict.get('mean', 0.0):.4f}`")
+                md.append(f"- **Outcome Distribution**: `{json.dumps(stats.get('outcomes', {}))}`")
+                md.append(f"- **Mean Steps Taken**: `{steps_dict.get('mean', 0.0):.1f}`")
                 md.append(f"- **Total Time Elapsed**: `{stats.get('elapsed_seconds', 0.0):.2f}s`")
                 return "\n".join(md), json.dumps(stats, indent=2)
             except Exception as e:
