@@ -370,21 +370,22 @@ def run_custom_test_ui(
             return "### Server Free Trial Fallback Key Unconfigured", "{}", session_state, _get_counter_msg(session_state)
 
     with _temporary_provider_override(active_provider, active_key):
-        mesh = MockMesh(use_db=False)
-        patch_mesh_for_adversarial(mesh)
-        if trap:
-            mesh.inject_hidden_dependency_fault(serv)
+        try:
+            mesh = MockMesh(use_db=False)
+            patch_mesh_for_adversarial(mesh)
+            if trap:
+                mesh.inject_hidden_dependency_fault(serv)
 
-        async def run_custom():
-            ep_id = f"custom-byo-{uuid.uuid4().hex[:6]}"
-            return await _episode_runner.run_episode_collect_trace(
-                mesh=mesh,
-                episode_id=ep_id,
-                task_id="byo_custom_test",
-                fault_description=fault_desc,
-            )
+            async def run_custom():
+                ep_id = f"custom-byo-{uuid.uuid4().hex[:6]}"
+                return await _episode_runner.run_episode_collect_trace(
+                    mesh=mesh,
+                    episode_id=ep_id,
+                    task_id="byo_custom_test",
+                    fault_description=fault_desc,
+                )
 
-        decisions, res_summary, final_reward = asyncio.run(run_custom())
+            decisions, res_summary, final_reward = asyncio.run(run_custom())
 
             has_inspection = any(d.get("action_type") in ("diagnostic_query", "log_inspection", "retrieve_runbook") for d in decisions)
             quarantine_blocks = sum(1 for d in decisions if d.get("quarantine_flag") or d.get("exit_code") == -1)
@@ -433,13 +434,6 @@ def run_custom_test_ui(
             safe_e = _sanitize_secrets(str(e), active_key, cleaned_key)
             err_msg = f"### Evaluation Execution Error\n\nAn exception occurred while executing your custom evaluation:\n```\n{safe_e}\n```"
             return err_msg, json.dumps({"error": safe_e}, indent=2), session_state, _get_counter_msg(session_state)
-        finally:
-            provider_pool.providers = orig_providers
-            provider_pool.current_idx = orig_idx
-            provider_pool.provider_cooldowns = orig_cooldowns
-            settings.model_api_key = orig_settings_key
-            settings.model_base_url = orig_settings_url
-            settings.model_name = orig_settings_model
 
 
 def _get_counter_msg(session_state) -> str:
