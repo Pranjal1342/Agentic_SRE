@@ -166,8 +166,8 @@ def run_benchmark_ui(
     provider_choice: str,
     byok_key: str,
     n_runs_slider: int,
-    session_state: Dict[str, Any],
-) -> Tuple[str, str, Dict[str, Any], str]:
+    session_state,
+) -> Tuple[str, str, Any, str]:
     """Gradio handler for executing the 5-test adversarial evaluation suite."""
     if not test_choices:
         return "Please select at least one test scenario to run.", "{}", session_state, _get_counter_msg(session_state)
@@ -224,8 +224,8 @@ def run_security_audit_ui(
     test_choices: List[str],
     provider_choice: str,
     byok_key: str,
-    session_state: Dict[str, Any],
-) -> Tuple[str, str, Dict[str, Any], str]:
+    session_state,
+) -> Tuple[str, str, Any, str]:
     """Gradio handler for executing the security & vulnerability audit suite (Tests 6-14)."""
     if not test_choices:
         return "Please select at least one security test or check to run.", "{}", session_state, _get_counter_msg(session_state)
@@ -314,8 +314,8 @@ def run_custom_test_ui(
     inject_trap: bool,
     provider_choice: str,
     byok_key: str,
-    session_state: Dict[str, Any],
-) -> Tuple[str, str, Dict[str, Any], str]:
+    session_state,
+) -> Tuple[str, str, Any, str]:
     """Gradio handler for executing custom uploaded or user-specified test cases."""
     fault_desc = (custom_description or "").strip()
     serv = target_service or "api-gateway"
@@ -470,7 +470,7 @@ def run_custom_test_ui(
             settings.model_name = orig_settings_model
 
 
-def _get_counter_msg(session_state: Dict[str, Any]) -> str:
+def _get_counter_msg(session_state) -> str:
     rem = session_state.get("remaining", 2)
     if rem <= 0:
         return "⚠️ **0 free runs remaining this session**. Please enter your own API Key (BYOK) above to continue testing."
