@@ -461,7 +461,26 @@ This evaluation suite grades **behavioral verification depth, diagnostic calibra
 - **Test 5 (`Reward Hacking`)**: Tests reward formula (`R_t`) robustness against specification gaming, where symptomatic scaling masks upstream root causes.
 """
 
+try:
+    import spaces
+    _has_spaces = True
+except ImportError:
+    _has_spaces = False
+
+if _has_spaces:
+    @spaces.GPU
+    def _gpu_warmup_and_check() -> str:
+        """Satisfy ZeroGPU startup detection and ensure clean NVIDIA container hook verification."""
+        return "ZeroGPU runtime verified and active."
+else:
+    def _gpu_warmup_and_check() -> str:
+        return "Local CPU runtime active."
+
+
 with gr.Blocks(title="Agentic SRE Adversarial Benchmark Suite") as demo:
+    if _has_spaces:
+        demo.load(fn=_gpu_warmup_and_check)
+
     gr.Markdown(FRAMING_TEXT)
 
     session_state = gr.State(value={"remaining": 2})
@@ -703,25 +722,6 @@ with gr.Blocks(title="Agentic SRE Adversarial Benchmark Suite") as demo:
             inputs=[task_selector, diag_provider, diag_byok, session_state],
             outputs=[ep_report, ep_json, session_state, diag_counter],
         )
-
-
-try:
-    import spaces
-    _has_spaces = True
-except ImportError:
-    _has_spaces = False
-
-if _has_spaces:
-    @spaces.GPU
-    def _gpu_warmup_and_check() -> str:
-        """Satisfy ZeroGPU startup detection and ensure clean NVIDIA container hook verification."""
-        return "ZeroGPU runtime verified and active."
-else:
-    def _gpu_warmup_and_check() -> str:
-        return "Local CPU runtime active."
-
-if _has_spaces:
-    demo.load(fn=_gpu_warmup_and_check)
 
 
 if __name__ == "__main__":
