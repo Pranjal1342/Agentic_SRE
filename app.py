@@ -709,6 +709,8 @@ with gr.Blocks(title="Agentic SRE Adversarial Benchmark Suite") as demo:
                 rewards_dict = stats.get("rewards", {})
                 steps_dict = stats.get("step_counts", {})
                 md = [f"# Episode Outcome for `{task_id}`\n"]
+                if stats.get("last_error"):
+                    md.append(f"### ⚠️ Episode Execution Failed\n```\n{stats['last_error']}\n```\n")
                 md.append(f"- **Mean Reward ($R_t$)**: `{rewards_dict.get('mean', 0.0):.4f}`")
                 md.append(f"- **Outcome Distribution**: `{json.dumps(stats.get('outcomes', {}))}`")
                 md.append(f"- **Mean Steps Taken**: `{steps_dict.get('mean', 0.0):.1f}`")

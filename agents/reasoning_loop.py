@@ -380,6 +380,12 @@ def _execute_completion_with_failover(messages: List[Dict[str, Any]], tools: Lis
             )
         except openai.RateLimitError as exc:
             last_exc = exc
+            err_msg = str(exc).lower()
+            if any(k in err_msg for k in ["1113", "余额不足", "insufficient balance", "depleted", "no credit", "quota"]):
+                log.warning("model.provider_error", status=402, provider=active["name"], error=_sanitize_key_str(str(exc)[:150], active_key))
+                if not provider_pool.next_provider(reason=402):
+                    raise RuntimeError(_sanitize_key_str(str(exc), active_key))
+                continue
             is_zhipu = "zhipu" in active.get("name", "").lower()
             rotate_threshold = 6 if is_zhipu else 2
             delay = min(base_delay * (2 ** ((total_attempts - 1) % (6 if is_zhipu else max_retries))), 30.0 if is_zhipu else max_delay)
@@ -392,10 +398,10 @@ def _execute_completion_with_failover(messages: List[Dict[str, Any]], tools: Lis
             err_msg = str(exc).lower()
             status_code = getattr(exc, "status_code", None)
             safe_err = _sanitize_key_str(str(exc)[:150], active_key)
-            if status_code in [401, 402, 403, 404] or (status_code == 400 and ("model" in err_msg or "not a valid" in err_msg or "endpoint" in err_msg)):
+            if status_code in [401, 402, 403, 404] or any(k in err_msg for k in ["1113", "余额不足", "insufficient balance", "depleted", "no credit", "quota"]) or (status_code == 400 and ("model" in err_msg or "not a valid" in err_msg or "endpoint" in err_msg)):
                 # Out of credits / auth failure / invalid model ID on this provider — rotate immediately!
-                log.warning("model.provider_error", status=status_code, provider=active["name"], error=safe_err)
-                if not provider_pool.next_provider(reason=status_code or 400):
+                log.warning("model.provider_error", status=status_code or 402, provider=active["name"], error=safe_err)
+                if not provider_pool.next_provider(reason=status_code or 402):
                     raise RuntimeError(_sanitize_key_str(str(exc), active_key))
                 continue
             elif status_code == 429:

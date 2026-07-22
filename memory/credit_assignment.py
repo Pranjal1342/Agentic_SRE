@@ -38,43 +38,47 @@ async def backfill_credit_labels(episode_id: str, outcome: str) -> int:
     4. Remediation actions in a failed/partial episode → 'failure'
        UNLESS the action was the last before resolution in partial (→ 'neutral')
     """
-    async with get_db_session() as session:
-        result = await session.execute(
-            select(Decision)
-            .where(Decision.episode_id == episode_id)
-            .order_by(Decision.step_index)
-        )
-        decisions = result.scalars().all()
-
-        if not decisions:
-            log.warning("credit_assignment.no_decisions", episode_id=episode_id)
-            return 0
-
-        total_steps = len(decisions)
-        updated = 0
-
-        for i, decision in enumerate(decisions):
-            if decision.credit_label is not None:
-                # Already labeled (shouldn't happen but be safe)
-                continue
-
-            label = _assign_label(
-                decision=decision,
-                outcome=outcome,
-                step_position=i,
-                total_steps=total_steps,
+    try:
+        async with get_db_session() as session:
+            result = await session.execute(
+                select(Decision)
+                .where(Decision.episode_id == episode_id)
+                .order_by(Decision.step_index)
             )
-            decision.credit_label = label
-            session.add(decision)
-            updated += 1
+            decisions = result.scalars().all()
 
-    log.info(
-        "credit_assignment.complete",
-        episode_id=episode_id,
-        outcome=outcome,
-        decisions_labeled=updated,
-    )
-    return updated
+            if not decisions:
+                log.warning("credit_assignment.no_decisions", episode_id=episode_id)
+                return 0
+
+            updated = 0
+            total_steps = len(decisions)
+
+            for i, decision in enumerate(decisions):
+                if decision.credit_label is not None:
+                    # Already labeled (shouldn't happen but be safe)
+                    continue
+
+                label = _assign_label(
+                    decision=decision,
+                    outcome=outcome,
+                    step_position=i,
+                    total_steps=total_steps,
+                )
+                decision.credit_label = label
+                session.add(decision)
+                updated += 1
+
+        log.info(
+            "credit_assignment.complete",
+            episode_id=episode_id,
+            outcome=outcome,
+            decisions_labeled=updated,
+        )
+        return updated
+    except Exception as exc:
+        log.warning("credit_assignment.db_unavailable", error=str(exc), note="Skipping backfill")
+        return 0
 
 
 def _assign_label(

@@ -51,6 +51,9 @@ TASK_MODULES = {
     "task_4": task_4,
 }
 
+for _tid, _mod in TASK_MODULES.items():
+    register_task(_tid, _mod)
+
 # Baseline scores from original repo for comparison
 BASELINE_SCORES = {
     "task_1": None,
@@ -64,6 +67,8 @@ async def eval_task(task_id: str, n_episodes: int) -> Dict[str, Any]:
     """
     Run n_episodes for a single task. Returns per-task statistics.
     """
+    if task_id in TASK_MODULES:
+        register_task(task_id, TASK_MODULES[task_id])
     rewards: List[float] = []
     outcomes: List[str] = []
     step_counts: List[int] = []
@@ -90,10 +95,12 @@ async def eval_task(task_id: str, n_episodes: int) -> Dict[str, Any]:
                 outcome=ctx.outcome,
             )
         except Exception as exc:
-            log.exception("eval.episode_error", task_id=task_id, ep_idx=ep_idx, error=str(exc))
+            err_str = str(exc)
+            log.exception("eval.episode_error", task_id=task_id, ep_idx=ep_idx, error=err_str)
             rewards.append(0.0)
             outcomes.append("error")
             step_counts.append(0)
+            last_error = err_str
 
     task_elapsed = time.time() - task_start
 
@@ -116,6 +123,7 @@ async def eval_task(task_id: str, n_episodes: int) -> Dict[str, Any]:
         "task_id": task_id,
         "n_episodes": n_episodes,
         "elapsed_seconds": round(task_elapsed, 1),
+        "last_error": last_error if "last_error" in locals() else None,
         "rewards": {
             "mean": round(mean_reward, 4),
             "std": round(std_reward, 4),

@@ -39,9 +39,13 @@ def _get_embed_model():
 
 def embed_state(state_signature: str) -> List[float]:
     """Embed a state signature string into a 384-dim vector."""
-    model = _get_embed_model()
-    vec = model.encode(state_signature, normalize_embeddings=True)
-    return vec.tolist() if hasattr(vec, "tolist") else list(vec)
+    try:
+        model = _get_embed_model()
+        vec = model.encode(state_signature, normalize_embeddings=True)
+        return vec.tolist() if hasattr(vec, "tolist") else list(vec)
+    except Exception as exc:
+        log.warning("retriever.embed_fallback", error=str(exc))
+        return [0.0] * 384
 
 
 async def retrieve_lessons(
@@ -66,26 +70,30 @@ async def retrieve_lessons(
     lessons: List[LessonSchema] = []
     no_match = True
 
-    async with get_db_session() as session:
-        # pgvector cosine similarity: 1 - cosine_distance
-        result = await session.execute(
-            text("""
-                SELECT
-                    lesson_id,
-                    best_action,
-                    outcome_summary,
-                    sample_count,
-                    success_rate,
-                    last_updated,
-                    1 - (state_cluster_embedding <=> :embedding ::vector) AS similarity
-                FROM lessons
-                WHERE state_cluster_embedding IS NOT NULL
-                ORDER BY state_cluster_embedding <=> :embedding ::vector
-                LIMIT :top_k
-            """),
-            {"embedding": embedding_str, "top_k": settings.retrieval_top_k},
-        )
-        rows = result.fetchall()
+    try:
+        async with get_db_session() as session:
+            # pgvector cosine similarity: 1 - cosine_distance
+            result = await session.execute(
+                text("""
+                    SELECT
+                        lesson_id,
+                        best_action,
+                        outcome_summary,
+                        sample_count,
+                        success_rate,
+                        last_updated,
+                        1 - (state_cluster_embedding <=> :embedding ::vector) AS similarity
+                    FROM lessons
+                    WHERE state_cluster_embedding IS NOT NULL
+                    ORDER BY state_cluster_embedding <=> :embedding ::vector
+                    LIMIT :top_k
+                """),
+                {"embedding": embedding_str, "top_k": settings.retrieval_top_k},
+            )
+            rows = result.fetchall()
+    except Exception as exc:
+        log.warning("retriever.db_unavailable", error=str(exc), note="Continuing without memory retrieval")
+        rows = []
 
     for row in rows:
         similarity = float(row.similarity)
